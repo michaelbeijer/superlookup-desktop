@@ -198,8 +198,6 @@ DEFAULT_RESOURCES = [
      "url": "https://www.wordreference.com/{sl}{tl}/{query}", "fmt": "iso2"},
     {"id": "keybot", "icon": "🔑", "name": "Keybot",
      "url": "https://www.keybot.com/{sl_full}-{tl_full}/{query}.htm", "fmt": None},
-    {"id": "sensagent", "icon": "📐", "name": "Sensagent",
-     "url": "http://dictionary.sensagent.com/{query}/{sl}-{tl}/", "fmt": "iso2"},
     {"id": "bing_translator", "icon": "🌉", "name": "Bing Translator",
      "url": "https://www.bing.com/translator/?from={sl}&to={tl}&text={query}", "fmt": "iso2"},
     {"id": "twolingual", "icon": "🔀", "name": "2lingual",
@@ -457,7 +455,11 @@ if HAVE_HOTKEY:
 
 # ── User config: which searches are enabled, plus custom ones ───────────────
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-DEFAULTS_REV = 3  # bump when the built-in search set or their URLs change
+DEFAULTS_REV = 4  # bump when the built-in search set or their URLs change
+
+# Built-in searches that were shipped and later pulled. Dropped from any saved
+# set on load, so a retired search doesn't linger as if it were a custom one.
+RETIRED_IDS = {"sensagent"}
 
 
 def _slug(name):
@@ -493,6 +495,8 @@ def merge_resources(saved, saved_rev):
     out, seen = [], set()
     for r in saved:
         rid = r.get("id")
+        if rid in RETIRED_IDS:
+            continue
         seen.add(rid)
         if refresh and rid in defaults:
             d = dict(defaults[rid])
@@ -1118,10 +1122,14 @@ class SuperLookup(QMainWindow):
             if res.get("wiki"):
                 tab = MediaWikiTab(res, self.profile)
                 tab.view.setZoomFactor(self.zoom)
+                tab.view.iconChanged.connect(
+                    lambda ic, w=tab: self._set_tab_icon(w, ic))
                 idx = self.tabs.addTab(tab, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("wiki", None)
             else:
                 view = make_view(self.profile, self.zoom)
+                view.iconChanged.connect(
+                    lambda ic, w=view: self._set_tab_icon(w, ic))
                 idx = self.tabs.addTab(view, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("url", build_url(res, query, frm, to))
 
@@ -1151,6 +1159,15 @@ class SuperLookup(QMainWindow):
                 self._hotkey.rebind(qt_to_pynput(self.hotkey_qt) or HOTKEY)
             if self.query.text().strip():
                 self.search()  # re-open tabs to reflect enable/disable changes
+
+    def _set_tab_icon(self, widget, icon):
+        """Show a loaded page's real favicon on its tab (keeps the emoji in the
+        label as the pre-load placeholder)."""
+        if icon is None or icon.isNull():
+            return
+        i = self.tabs.indexOf(widget)
+        if i >= 0:
+            self.tabs.setTabIcon(i, icon)
 
     def on_tab_changed(self, idx):
         self.load_tab(idx)
