@@ -400,8 +400,9 @@ if HAVE_WEBENGINE:
             self.loadFinished.connect(self._maybe_escape_cf)
 
         def _maybe_escape_cf(self, ok):
-            if not ok:
-                return
+            # Cloudflare challenge pages come back as HTTP 403, so `ok` is False
+            # even though the wall rendered fine — must NOT bail on that. The JS
+            # probe is harmless on genuine error/blank pages (returns false).
             url = self.url()
             us = url.toString()
             if not us or us in self._cf_seen:
