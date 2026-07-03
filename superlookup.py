@@ -322,7 +322,7 @@ if HAVE_HOTKEY:
 
         def _on_captured(self, text):
             w = self.window
-            w.showNormal(); w.raise_(); w.activateWindow()
+            w.show_window()
             lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
             if lines:
                 w.query.setText(lines[0])
@@ -719,6 +719,7 @@ class SuperLookup(QMainWindow):
         # global hotkey stays alive. The app quits only from the tray menu.
         self.tray = None
         self._informed_tray = False
+        self._saved_geometry = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
             self.setWindowIcon(icon)
@@ -750,7 +751,11 @@ class SuperLookup(QMainWindow):
             self.tray.setToolTip(f"SuperLookup — press {hk}" if HAVE_HOTKEY else "SuperLookup")
 
     def show_window(self):
-        self.showNormal()
+        # Restore the exact geometry we had when hidden (saveGeometry captures
+        # the maximized/fullscreen state too), instead of forcing "normal".
+        if self._saved_geometry is not None:
+            self.restoreGeometry(self._saved_geometry)
+        self.show()
         self.raise_()
         self.activateWindow()
 
@@ -762,6 +767,7 @@ class SuperLookup(QMainWindow):
         # With a tray icon, hide to tray instead of quitting (keeps the hotkey live).
         if self.tray is not None:
             event.ignore()
+            self._saved_geometry = self.saveGeometry()  # remember size/position/state
             self.hide()
             if not self._informed_tray:
                 self._informed_tray = True
