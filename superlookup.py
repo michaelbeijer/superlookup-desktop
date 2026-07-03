@@ -288,6 +288,35 @@ if HAVE_WEBENGINE:
             if ADBLOCK.blocked(info.requestUrl().host()):
                 info.block(True)
 
+    class Page(QWebEnginePage):
+        """Open would-be-new-window links (target=_blank / window.open) in the
+        same view, so clicking e.g. a ProZ result navigates in place."""
+        def createWindow(self, _type):
+            return self
+
+    class WebView(QWebEngineView):
+        """Right-click adds 'Open in browser' for the current page (and any
+        link under the cursor), so you can pop out to your real browser."""
+        def contextMenuEvent(self, event):
+            menu = self.createStandardContextMenu()
+            menu.addSeparator()
+            req = (self.lastContextMenuRequest()
+                   if hasattr(self, "lastContextMenuRequest") else None)
+            link = req.linkUrl() if req is not None else None
+            if link is not None and not link.isEmpty():
+                a = menu.addAction("Open link in browser")
+                a.triggered.connect(lambda _=False, u=QUrl(link): QDesktopServices.openUrl(u))
+            page_url = self.url()
+            a2 = menu.addAction("Open this page in browser")
+            a2.triggered.connect(lambda _=False, u=QUrl(page_url): QDesktopServices.openUrl(u))
+            menu.exec(event.globalPos())
+
+    def make_view(profile):
+        view = WebView()
+        if profile is not None:
+            view.setPage(Page(profile, view))
+        return view
+
 
 # ── Global hotkey + clipboard capture ───────────────────────────────────────
 if HAVE_HOTKEY:
@@ -672,19 +701,28 @@ class MediaWikiTab(QWidget):
         super().__init__(parent)
         self.resource = resource
         self._nam = QNetworkAccessManager(self)
+        self._count = 0
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
+
+        # A thin bar that collapses/expands the suggestion list.
+        self.toggle = QPushButton()
+        self.toggle.setObjectName("wikitoggle")
+        self.toggle.setFlat(True)
+        self.toggle.clicked.connect(self._toggle_list)
+        lay.addWidget(self.toggle)
+
         self.list = QListWidget()
         self.list.setObjectName("wikilist")
         self.list.setMaximumHeight(210)
         self.list.itemClicked.connect(self._open)
         lay.addWidget(self.list)
-        self.view = QWebEngineView()
-        if profile is not None:
-            self.view.setPage(QWebEnginePage(profile, self.view))
+
+        self.view = make_view(profile)
         lay.addWidget(self.view, 1)
+        self._update_toggle()
 
     def search(self, query, from_lang, to_lang):
         query = (query or "").strip()
@@ -695,8 +733,11 @@ class MediaWikiTab(QWidget):
                 else f"https://{from_lang}.{wiki}.org")
         api = (f"{host}/w/api.php?action=opensearch&limit=15&namespace=0"
                f"&format=json&search={quote(query)}")
+        self._count = 0
         self.list.clear()
         self.list.addItem("Searching…")
+        self.list.setVisible(True)
+        self._update_toggle()
         req = QNetworkRequest(QUrl(api))
         # Wikimedia's API blocks requests without a descriptive User-Agent.
         req.setRawHeader(b"User-Agent", b"SuperLookup-desktop (+https://superlookup.io)")
@@ -713,8 +754,10 @@ class MediaWikiTab(QWidget):
             reply.deleteLater()
 
         self.list.clear()
+        self._count = len(titles)
         if not titles:
             self.list.addItem("No matching pages.")
+            self._update_toggle()
             return
         for i, title in enumerate(titles):
             it = QListWidgetItem(title)
@@ -727,11 +770,24 @@ class MediaWikiTab(QWidget):
         if urls:
             self.view.load(QUrl(urls[0]))
             self.list.setCurrentRow(0)
+        self._update_toggle()
 
     def _open(self, item):
         url = item.data(Qt.ItemDataRole.UserRole)
         if url:
             self.view.load(QUrl(url))
+            self.list.setVisible(False)  # collapse to give the page full height
+            self._update_toggle()
+
+    def _toggle_list(self):
+        self.list.setVisible(not self.list.isVisible())
+        self._update_toggle()
+
+    def _update_toggle(self):
+        shown = self.list.isVisible()
+        n = self._count
+        label = f"{n} matching page{'' if n == 1 else 's'}" if n else "matching pages"
+        self.toggle.setText(("▴  " if shown else "▾  ") + label)
 
 
 class SuperLookup(QMainWindow):
@@ -959,9 +1015,7 @@ class SuperLookup(QMainWindow):
                 idx = self.tabs.addTab(tab, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("wiki", None)
             else:
-                view = QWebEngineView()
-                if self.profile is not None:
-                    view.setPage(QWebEnginePage(self.profile, view))
+                view = make_view(self.profile)
                 idx = self.tabs.addTab(view, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("url", build_url(res, query, frm, to))
 
@@ -1067,6 +1121,12 @@ QListWidget {
 QListWidget::item { padding: 5px 6px; border-radius: 6px; }
 QListWidget::item:selected { background: #eaf0fb; color: #111111; }
 QListWidget#wikilist { border: none; border-bottom: 1px solid #e1e1e1; border-radius: 0; }
+QPushButton#wikitoggle {
+    text-align: left; padding: 5px 10px; border: none; border-radius: 0;
+    border-bottom: 1px solid #e1e1e1; background: #f6f8fc; color: #5a5a5a;
+    font-size: 12px;
+}
+QPushButton#wikitoggle:hover { background: #eef2f9; color: #111111; }
 
 QScrollBar:vertical { border: none; background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: #cfd4dc; border-radius: 5px; min-height: 24px; }
