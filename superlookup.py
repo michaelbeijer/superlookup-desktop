@@ -60,7 +60,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -186,6 +186,66 @@ DEFAULT_RESOURCES = [
      "url": "https://patents.google.com/?q=\"{query}\"", "fmt": None},
     {"id": "github_code", "icon": "💻", "name": "GitHub Code",
      "url": "https://github.com/search?q={query}&type=code", "fmt": None},
+    # ── Bilingual dictionaries ──────────────────────────────────────────────
+    {"id": "glosbe", "icon": "📘", "name": "Glosbe",
+     "url": "https://glosbe.com/{sl}/{tl}/{query}", "fmt": "iso2"},
+    {"id": "babla", "icon": "🗣️", "name": "bab.la",
+     "url": "https://en.bab.la/dictionary/{sl_full}-{tl_full}/{query}", "fmt": None},
+    {"id": "wordreference", "icon": "📕", "name": "WordReference",
+     "url": "https://www.wordreference.com/{sl}{tl}/{query}", "fmt": "iso2"},
+    {"id": "keybot", "icon": "🔑", "name": "Keybot",
+     "url": "https://www.keybot.com/{sl_full}-{tl_full}/{query}.htm", "fmt": None},
+    {"id": "sensagent", "icon": "📐", "name": "Sensagent",
+     "url": "http://dictionary.sensagent.com/{query}/{sl}-{tl}/", "fmt": "iso2"},
+    {"id": "bing_translator", "icon": "🌉", "name": "Bing Translator",
+     "url": "https://www.bing.com/translator/?from={sl}&to={tl}&text={query}", "fmt": "iso2"},
+    {"id": "twolingual", "icon": "🔀", "name": "2lingual",
+     "url": "https://www.2lingual.com/2lingual-google/google-search?q={query}&lr1=lang_{sl}&lr2=lang_{tl}", "fmt": "iso2"},
+    # ── Dutch ───────────────────────────────────────────────────────────────
+    {"id": "woordenlijst", "icon": "🇳🇱", "name": "Woordenlijst (Taalunie)",
+     "url": "https://woordenlijst.org/#/?q={query}", "fmt": None},
+    {"id": "synoniemen", "icon": "🔁", "name": "Synoniemen.net",
+     "url": "https://synoniemen.net/index.php?zoekterm={query}", "fmt": None},
+    {"id": "dfbonline", "icon": "💶", "name": "Financiële Begrippenlijst",
+     "url": "https://www.dfbonline.nl/begrippen/{query}", "fmt": None},
+    # ── EU / terminology ────────────────────────────────────────────────────
+    {"id": "eurlex", "icon": "📜", "name": "EUR-Lex",
+     "url": "https://eur-lex.europa.eu/search.html?text={query}&scope=EURLEX&type=quick", "fmt": None},
+    {"id": "eurotermbank", "icon": "🏛️", "name": "EuroTermBank",
+     "url": "https://www.eurotermbank.com/search/{query}", "fmt": None},
+    {"id": "gemet", "icon": "🌍", "name": "GEMET Thesaurus",
+     "url": "https://www.eionet.europa.eu/gemet/en/search/?query={query}", "fmt": None},
+    # ── English monolingual / writing ───────────────────────────────────────
+    {"id": "collins", "icon": "📙", "name": "Collins",
+     "url": "https://www.collinsdictionary.com/dictionary/english/{query}", "fmt": None},
+    {"id": "thefreedictionary", "icon": "📔", "name": "TheFreeDictionary",
+     "url": "https://www.thefreedictionary.com/{query}", "fmt": None},
+    {"id": "merriam_thesaurus", "icon": "📗", "name": "Merriam-Webster Thesaurus",
+     "url": "https://www.merriam-webster.com/thesaurus/{query}", "fmt": None},
+    {"id": "thesaurus_com", "icon": "🗂️", "name": "Thesaurus.com",
+     "url": "https://www.thesaurus.com/browse/{query}", "fmt": None},
+    {"id": "freecollocation", "icon": "🔗", "name": "Oxford Collocations",
+     "url": "http://www.freecollocation.com/search?word={query}", "fmt": None},
+    {"id": "skell", "icon": "📊", "name": "SkELL Concordance",
+     "url": "https://skell.sketchengine.eu/#result?lang=en&query={query}", "fmt": None},
+    {"id": "etymonline", "icon": "🏺", "name": "Etymonline",
+     "url": "https://www.etymonline.com/search?q={query}", "fmt": None},
+    {"id": "wordnik", "icon": "🔤", "name": "Wordnik",
+     "url": "https://www.wordnik.com/words/{query}", "fmt": None},
+    {"id": "visuwords", "icon": "🕸️", "name": "Visuwords",
+     "url": "https://visuwords.com/{query}", "fmt": None},
+    {"id": "howmanysyllables", "icon": "🎵", "name": "Syllable Dictionary",
+     "url": "https://www.howmanysyllables.com/words/{query}", "fmt": None},
+    # ── Medical / technical ─────────────────────────────────────────────────
+    {"id": "ema", "icon": "💊", "name": "EMA Medicines",
+     "url": "https://www.ema.europa.eu/en/medicines?search_api_views_fulltext={query}", "fmt": None},
+    {"id": "emc", "icon": "💉", "name": "EMC Medicines",
+     "url": "https://www.medicines.org.uk/emc/search?q={query}", "fmt": None},
+    {"id": "chemindustry", "icon": "🧪", "name": "ChemIndustry",
+     "url": "http://www.chemindustry.com/apps/chemicals?m=s&t={query}", "fmt": None},
+    # ── Media ───────────────────────────────────────────────────────────────
+    {"id": "imdb", "icon": "🎬", "name": "IMDb",
+     "url": "https://www.imdb.com/find?q={query}&s=tt", "fmt": None},
 ]
 
 
@@ -311,10 +371,11 @@ if HAVE_WEBENGINE:
             a2.triggered.connect(lambda _=False, u=QUrl(page_url): QDesktopServices.openUrl(u))
             menu.exec(event.globalPos())
 
-    def make_view(profile):
+    def make_view(profile, zoom=1.0):
         view = WebView()
         if profile is not None:
             view.setPage(Page(profile, view))
+        view.setZoomFactor(zoom)
         return view
 
 
@@ -377,7 +438,7 @@ if HAVE_HOTKEY:
 
 # ── User config: which searches are enabled, plus custom ones ───────────────
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-DEFAULTS_REV = 2  # bump when the built-in search set or their URLs change
+DEFAULTS_REV = 3  # bump when the built-in search set or their URLs change
 
 
 def _slug(name):
@@ -495,7 +556,7 @@ class ResourceEditDialog(QDialog):
 class SettingsDialog(QDialog):
     """Enable/disable, reorder, add/edit/remove, and import/export searches."""
 
-    def __init__(self, resources, hotkey_qt, parent=None):
+    def __init__(self, resources, hotkey_qt, zoom=1.0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SuperLookup — Settings")
         self.resize(640, 560)
@@ -516,6 +577,24 @@ class SettingsDialog(QDialog):
         hk_hint.setStyleSheet("color:#666; font-size:11px;")
         hk_hint.setWordWrap(True)
         v.addWidget(hk_hint)
+
+        z_row = QHBoxLayout()
+        z_row.addWidget(QLabel("Default page zoom:"))
+        self.zoom_cb = QComboBox()
+        for pct in (50, 67, 75, 80, 90, 100, 110, 125, 150):
+            self.zoom_cb.addItem(f"{pct}%", pct / 100.0)
+        cur_i = min(range(self.zoom_cb.count()),
+                    key=lambda i: abs(self.zoom_cb.itemData(i) - zoom))
+        self.zoom_cb.setCurrentIndex(cur_i)
+        z_row.addWidget(self.zoom_cb)
+        z_row.addStretch(1)
+        v.addLayout(z_row)
+        z_hint = QLabel(
+            "Applied to every search tab. Handy for sites like Superterm that "
+            "show more when zoomed out. (Ctrl +/– still zooms a single tab.)")
+        z_hint.setStyleSheet("color:#666; font-size:11px;")
+        z_hint.setWordWrap(True)
+        v.addWidget(z_hint)
 
         v.addWidget(QLabel(
             "Tick the searches you want as tabs. Add your own, reorder with ↑ / ↓, "
@@ -560,6 +639,9 @@ class SettingsDialog(QDialog):
 
     def hotkey_value(self):
         return self.hk_edit.keySequence().toString()
+
+    def zoom_value(self):
+        return self.zoom_cb.currentData()
 
     def _reload(self):
         self.list.clear()
@@ -799,6 +881,10 @@ class SuperLookup(QMainWindow):
             self._config.get("resources"), self._config.get("defaults_rev"))
         self._hotkey = None
         self.hotkey_qt = self._config.get("hotkey") or DEFAULT_HOTKEY_QT
+        try:
+            self.zoom = float(self._config.get("zoom") or 1.0)
+        except (TypeError, ValueError):
+            self.zoom = 1.0
         self.setWindowTitle("SuperLookup")
         self.resize(1150, 820)
 
@@ -1012,10 +1098,11 @@ class SuperLookup(QMainWindow):
                 continue
             if res.get("wiki"):
                 tab = MediaWikiTab(res, self.profile)
+                tab.view.setZoomFactor(self.zoom)
                 idx = self.tabs.addTab(tab, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("wiki", None)
             else:
-                view = make_view(self.profile)
+                view = make_view(self.profile, self.zoom)
                 idx = self.tabs.addTab(view, f"{res['icon']}  {res['name']}")
                 self._pending[idx] = ("url", build_url(res, query, frm, to))
 
@@ -1029,14 +1116,16 @@ class SuperLookup(QMainWindow):
             "from": self.from_cb.currentData(),
             "to": self.to_cb.currentData(),
             "hotkey": self.hotkey_qt,
+            "zoom": self.zoom,
             "defaults_rev": DEFAULTS_REV,
         })
 
     def open_settings(self):
-        dlg = SettingsDialog(self.resources, self.hotkey_qt, self)
+        dlg = SettingsDialog(self.resources, self.hotkey_qt, self.zoom, self)
         if dlg.exec():
             self.resources = dlg.result_resources()
             self.hotkey_qt = dlg.hotkey_value() or self.hotkey_qt
+            self.zoom = dlg.zoom_value()
             self._save()
             self._refresh_hotkey_ui()
             if self._hotkey is not None:
