@@ -30,13 +30,13 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QComboBox, QPushButton, QTabWidget, QLabel,
     QSystemTrayIcon, QMenu, QStyle,
     QDialog, QListWidget, QListWidgetItem, QDialogButtonBox, QFormLayout,
-    QFileDialog, QMessageBox,
+    QFileDialog, QMessageBox, QKeySequenceEdit,
 )
 
 try:
@@ -59,7 +59,32 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-HOTKEY = "<ctrl>+<alt>+l"
+HOTKEY = "<ctrl>+<alt>+l"          # pynput fallback
+DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config
+
+
+def qt_to_pynput(seq):
+    """Convert a Qt key-sequence string ("Ctrl+Alt+L") to pynput's GlobalHotKeys
+    format ("<ctrl>+<alt>+l"). Returns None if there's no modifier + key."""
+    if not seq:
+        return None
+    mods = {"ctrl": "<ctrl>", "alt": "<alt>", "shift": "<shift>", "meta": "<cmd>"}
+    out, key = [], None
+    for part in seq.split("+"):
+        p = part.strip()
+        if p.lower() in mods:
+            out.append(mods[p.lower()])
+        elif p:
+            key = p
+    if not key or not out:  # a global hotkey needs at least one modifier + a key
+        return None
+    if len(key) == 1:
+        out.append(key.lower())
+    elif re.fullmatch(r"[Ff]\d{1,2}", key):
+        out.append(f"<{key.lower()}>")
+    else:
+        out.append(f"<{key.lower().replace(' ', '_')}>")
+    return "+".join(out)
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 WEBDATA_DIR = os.path.join(DATA_DIR, "webdata")  # persistent cookies/logins/cache
@@ -257,15 +282,28 @@ if HAVE_HOTKEY:
         _fired = pyqtSignal()        # from the pynput listener thread
         _captured = pyqtSignal(str)  # from the capture worker thread
 
-        def __init__(self, window):
+        def __init__(self, window, combo):
             super().__init__()
             self.window = window
             self._kbd = _KbController()
+            self._listener = None
             self._fired.connect(self._on_fired)
             self._captured.connect(self._on_captured)
-            self._listener = _pk.GlobalHotKeys({HOTKEY: self._fired.emit})
-            self._listener.daemon = True
-            self._listener.start()
+            self.rebind(combo)
+
+        def rebind(self, combo):
+            if self._listener is not None:
+                try:
+                    self._listener.stop()
+                except Exception:
+                    pass
+                self._listener = None
+            try:
+                self._listener = _pk.GlobalHotKeys({combo: self._fired.emit})
+                self._listener.daemon = True
+                self._listener.start()
+            except Exception as e:
+                print(f"[hotkey] could not register {combo!r}: {e}")
 
         def _on_fired(self):
             threading.Thread(target=self._capture, daemon=True).start()
@@ -395,13 +433,28 @@ class ResourceEditDialog(QDialog):
 class SettingsDialog(QDialog):
     """Enable/disable, reorder, add/edit/remove, and import/export searches."""
 
-    def __init__(self, resources, parent=None):
+    def __init__(self, resources, hotkey_qt, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SuperLookup — Settings")
-        self.resize(640, 520)
+        self.resize(640, 560)
         self.resources = [dict(r) for r in resources]
 
         v = QVBoxLayout(self)
+
+        hk_row = QHBoxLayout()
+        hk_row.addWidget(QLabel("Global hotkey:"))
+        self.hk_edit = QKeySequenceEdit(QKeySequence(hotkey_qt))
+        if hasattr(self.hk_edit, "setMaximumSequenceLength"):
+            self.hk_edit.setMaximumSequenceLength(1)
+        hk_row.addWidget(self.hk_edit, 1)
+        v.addLayout(hk_row)
+        hk_hint = QLabel(
+            "Click the field and press your shortcut. Select text anywhere, then "
+            "press it to search — needs a modifier (Ctrl / Alt / Shift / ⌘).")
+        hk_hint.setStyleSheet("color:#666; font-size:11px;")
+        hk_hint.setWordWrap(True)
+        v.addWidget(hk_hint)
+
         v.addWidget(QLabel(
             "Tick the searches you want as tabs. Add your own, reorder with ↑ / ↓, "
             "and Import/Export to share them."))
@@ -429,9 +482,22 @@ class SettingsDialog(QDialog):
         v.addLayout(row)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.accept)
+        bb.accepted.connect(self._accept_dialog)
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
+
+    def _accept_dialog(self):
+        seq = self.hk_edit.keySequence().toString()
+        if seq and not any(m in seq for m in ("Ctrl", "Alt", "Shift", "Meta")):
+            QMessageBox.warning(
+                self, "Add a modifier",
+                "A global shortcut needs at least one modifier (Ctrl, Alt, Shift, or ⌘) "
+                "so it doesn't fire on every keypress.")
+            return
+        self.accept()
+
+    def hotkey_value(self):
+        return self.hk_edit.keySequence().toString()
 
     def _reload(self):
         self.list.clear()
@@ -570,6 +636,8 @@ class SuperLookup(QMainWindow):
         self.profile = profile
         self._config = load_config()
         self.resources = merge_resources(self._config.get("resources"))
+        self._hotkey = None
+        self.hotkey_qt = self._config.get("hotkey") or DEFAULT_HOTKEY_QT
         self.setWindowTitle("SuperLookup — standalone mockup")
         self.resize(1150, 820)
 
@@ -626,17 +694,10 @@ class SuperLookup(QMainWindow):
         self.tabs.currentChanged.connect(self.on_tab_changed)
         layout.addWidget(self.tabs, 1)
 
-        hotkey_note = ("  Select text anywhere and press Ctrl+Alt+L to search it."
-                       if HAVE_HOTKEY else "")
-        note = QLabel(
-            "Each resource opens in its own embedded browser tab (loaded when you "
-            "first click it), with ads and trackers blocked. The full Supervertaler "
-            "version also searches your local termbases and translation memories."
-            + hotkey_note
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #666; padding: 4px 2px;")
-        layout.addWidget(note)
+        self._note = QLabel()
+        self._note.setWordWrap(True)
+        self._note.setStyleSheet("color: #666; padding: 4px 2px;")
+        layout.addWidget(self._note)
 
         self._pending = {}
 
@@ -662,7 +723,7 @@ class SuperLookup(QMainWindow):
             icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
             self.setWindowIcon(icon)
             self.tray = QSystemTrayIcon(icon, self)
-            self.tray.setToolTip("SuperLookup — press Ctrl+Alt+L")
+            self.tray.setToolTip(f"SuperLookup — press {self.hotkey_qt}")
             menu = QMenu()
             act_show = QAction("Show SuperLookup", self)
             act_show.triggered.connect(self.show_window)
@@ -674,6 +735,19 @@ class SuperLookup(QMainWindow):
             self.tray.setContextMenu(menu)
             self.tray.activated.connect(self._tray_activated)
             self.tray.show()
+
+        self._refresh_hotkey_ui()
+
+    def _refresh_hotkey_ui(self):
+        hk = self.hotkey_qt
+        extra = (f"  Select text anywhere and press {hk} to search it."
+                 if HAVE_HOTKEY else "")
+        self._note.setText(
+            "Each resource opens in its own embedded browser tab (loaded when you "
+            "first click it), with ads and trackers blocked. The full Supervertaler "
+            "version also searches your local termbases and translation memories." + extra)
+        if getattr(self, "tray", None) is not None:
+            self.tray.setToolTip(f"SuperLookup — press {hk}" if HAVE_HOTKEY else "SuperLookup")
 
     def show_window(self):
         self.showNormal()
@@ -741,13 +815,18 @@ class SuperLookup(QMainWindow):
             "resources": self.resources,
             "from": self.from_cb.currentData(),
             "to": self.to_cb.currentData(),
+            "hotkey": self.hotkey_qt,
         })
 
     def open_settings(self):
-        dlg = SettingsDialog(self.resources, self)
+        dlg = SettingsDialog(self.resources, self.hotkey_qt, self)
         if dlg.exec():
             self.resources = dlg.result_resources()
+            self.hotkey_qt = dlg.hotkey_value() or self.hotkey_qt
             self._save()
+            self._refresh_hotkey_ui()
+            if self._hotkey is not None:
+                self._hotkey.rebind(qt_to_pynput(self.hotkey_qt) or HOTKEY)
             if self.query.text().strip():
                 self.search()  # re-open tabs to reflect enable/disable changes
 
@@ -802,7 +881,7 @@ def main():
         # Closing the window keeps the app (and hotkey) alive in the tray.
         app.setQuitOnLastWindowClosed(False)
     if HAVE_HOTKEY:
-        win._hotkey = Hotkey(win)  # keep a reference alive
+        win._hotkey = Hotkey(win, qt_to_pynput(win.hotkey_qt) or HOTKEY)  # keep a ref alive
 
     sys.exit(app.exec())
 
