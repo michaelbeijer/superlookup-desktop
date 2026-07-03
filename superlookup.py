@@ -663,7 +663,8 @@ class SuperLookup(QMainWindow):
                     combo.setCurrentIndex(i)
 
         swap = QPushButton("⇄")
-        swap.setFixedWidth(36)
+        swap.setObjectName("iconbtn")
+        swap.setFixedWidth(34)
         swap.clicked.connect(self.swap)
 
         self.query = QLineEdit()
@@ -673,10 +674,12 @@ class SuperLookup(QMainWindow):
         self.query.returnPressed.connect(self.search)
 
         go = QPushButton("Search")
+        go.setObjectName("go")
         go.clicked.connect(self.search)
 
         settings_btn = QPushButton("⚙")
-        settings_btn.setFixedWidth(36)
+        settings_btn.setObjectName("iconbtn")
+        settings_btn.setFixedWidth(34)
         settings_btn.setToolTip("Settings — enable/disable and manage searches")
         settings_btn.clicked.connect(self.open_settings)
 
@@ -851,8 +854,78 @@ class SuperLookup(QMainWindow):
             widget.load(QUrl(url))
 
 
+STYLE = """
+* { font-family: "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif; }
+QMainWindow, QDialog, QWidget { background: #ffffff; color: #111111; font-size: 10pt; }
+QLabel { color: #333333; }
+
+QLineEdit {
+    border: 1px solid #d5d9e0; border-radius: 8px; padding: 6px 10px;
+    background: #ffffff; selection-background-color: #3366cc; selection-color: #ffffff;
+}
+QLineEdit:focus { border: 1px solid #3366cc; }
+
+QComboBox {
+    border: 1px solid #d5d9e0; border-radius: 8px; padding: 5px 8px;
+    background: #ffffff; min-height: 20px;
+}
+QComboBox:hover { border-color: #b8c0cc; }
+QComboBox QAbstractItemView {
+    border: 1px solid #d5d9e0; selection-background-color: #eaf0fb;
+    selection-color: #111111; outline: 0;
+}
+
+QPushButton {
+    border: 1px solid #d5d9e0; border-radius: 8px; padding: 6px 12px;
+    background: #f5f6f8; color: #111111;
+}
+QPushButton:hover { background: #eceef2; border-color: #c7ccd6; }
+QPushButton:pressed { background: #e2e5ea; }
+QPushButton#go {
+    background: #3366cc; border: 1px solid #3366cc; color: #ffffff; font-weight: 600;
+}
+QPushButton#go:hover { background: #2f5cbb; border-color: #2f5cbb; }
+QPushButton#go:pressed { background: #274ea3; }
+
+QPushButton#iconbtn { padding: 4px 0; font-size: 14px; }
+
+QTabWidget::pane { border: none; border-top: 1px solid #cfd5de; background: #ffffff; }
+QTabBar { qproperty-drawBase: 0; }
+QTabBar::tab {
+    background: #e9edf2;
+    color: #5a5a5a;
+    padding: 7px 15px;
+    margin-right: 3px;
+    border: 1px solid #cfd5de;
+    border-bottom: none;
+    border-top-left-radius: 9px;
+    border-top-right-radius: 9px;
+    min-width: 56px;
+}
+QTabBar::tab:hover { background: #dfe4ec; color: #111111; }
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #1a1a1a;
+    margin-bottom: -1px;   /* overlap the pane border → tab connects to the page */
+}
+
+QListWidget {
+    border: 1px solid #e1e1e1; border-radius: 8px; padding: 4px; background: #ffffff;
+}
+QListWidget::item { padding: 5px 6px; border-radius: 6px; }
+QListWidget::item:selected { background: #eaf0fb; color: #111111; }
+
+QScrollBar:vertical { border: none; background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: #cfd4dc; border-radius: 5px; min-height: 24px; }
+QScrollBar::handle:vertical:hover { background: #b8bec8; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+"""
+
+
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")       # consistent base across Win/macOS/Linux
+    app.setStyleSheet(STYLE)
 
     profile = None
     if HAVE_WEBENGINE:
