@@ -31,6 +31,7 @@ from urllib.request import Request, urlopen
 
 from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QDesktopServices
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QComboBox, QPushButton, QTabWidget, QLabel,
@@ -170,11 +171,11 @@ DEFAULT_RESOURCES = [
     {"id": "babelnet", "icon": "🌐", "name": "BabelNet",
      "url": "https://babelnet.org/search?word={query}&lang={sl_upper}&transLang={tl_upper}", "fmt": "iso2"},
     {"id": "wikipedia", "icon": "📖", "name": "Wikipedia",
-     "url": "https://{sl}.wikipedia.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2"},
+     "url": "https://{sl}.wikipedia.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2", "wiki": "wikipedia"},
     {"id": "wiktionary", "icon": "📓", "name": "Wiktionary",
-     "url": "https://{sl}.wiktionary.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2"},
+     "url": "https://{sl}.wiktionary.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2", "wiki": "wiktionary"},
     {"id": "wikidata", "icon": "🔗", "name": "Wikidata",
-     "url": "https://www.wikidata.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": None},
+     "url": "https://www.wikidata.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": None, "wiki": "wikidata"},
     {"id": "acronymfinder", "icon": "🔤", "name": "AcronymFinder",
      "url": "https://www.acronymfinder.com/~/search/af.aspx?string=exact&Acronym={query}", "fmt": None},
     {"id": "opus", "icon": "🗂️", "name": "OPUS Corpus",
@@ -347,6 +348,7 @@ if HAVE_HOTKEY:
 
 # ── User config: which searches are enabled, plus custom ones ───────────────
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+DEFAULTS_REV = 2  # bump when the built-in search set or their URLs change
 
 
 def _slug(name):
@@ -367,15 +369,32 @@ def load_config():
         return {}
 
 
-def merge_resources(saved):
-    """The user's saved resources, with any newly-shipped defaults appended."""
-    if isinstance(saved, list) and saved:
-        seen = {r.get("id") for r in saved}
-        for d in default_resources():
-            if d["id"] not in seen:
-                saved.append(d)
-        return saved
-    return default_resources()
+def merge_resources(saved, saved_rev):
+    """The user's saved resources, kept in sync with the built-ins.
+
+    On a defaults-revision bump, each built-in search has its definition
+    (url/name/icon/fmt) refreshed from the current defaults — while keeping the
+    user's enabled state and ordering. Custom searches are left untouched, and
+    any newly-shipped built-ins are appended.
+    """
+    if not isinstance(saved, list) or not saved:
+        return default_resources()
+    defaults = {d["id"]: d for d in default_resources()}
+    refresh = saved_rev != DEFAULTS_REV
+    out, seen = [], set()
+    for r in saved:
+        rid = r.get("id")
+        seen.add(rid)
+        if refresh and rid in defaults:
+            d = dict(defaults[rid])
+            d["enabled"] = r.get("enabled", True)  # keep the user's on/off choice
+            out.append(d)
+        else:
+            out.append(r)
+    for d in default_resources():
+        if d["id"] not in seen:
+            out.append(d)
+    return out
 
 
 def save_config(data):
@@ -644,12 +663,81 @@ class SettingsDialog(QDialog):
         }
 
 
+class MediaWikiTab(QWidget):
+    """Wikipedia / Wiktionary / Wikidata tab: a native list of matching pages
+    (MediaWiki OpenSearch) above an embedded view that loads whichever page you
+    pick — like the web version's inline suggestions."""
+
+    def __init__(self, resource, profile, parent=None):
+        super().__init__(parent)
+        self.resource = resource
+        self._nam = QNetworkAccessManager(self)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.list = QListWidget()
+        self.list.setObjectName("wikilist")
+        self.list.setMaximumHeight(210)
+        self.list.itemClicked.connect(self._open)
+        lay.addWidget(self.list)
+        self.view = QWebEngineView()
+        if profile is not None:
+            self.view.setPage(QWebEnginePage(profile, self.view))
+        lay.addWidget(self.view, 1)
+
+    def search(self, query, from_lang, to_lang):
+        query = (query or "").strip()
+        if not query:
+            return
+        wiki = self.resource.get("wiki")
+        host = ("https://www.wikidata.org" if wiki == "wikidata"
+                else f"https://{from_lang}.{wiki}.org")
+        api = (f"{host}/w/api.php?action=opensearch&limit=15&namespace=0"
+               f"&format=json&search={quote(query)}")
+        self.list.clear()
+        self.list.addItem("Searching…")
+        reply = self._nam.get(QNetworkRequest(QUrl(api)))
+        reply.finished.connect(lambda: self._on_reply(reply))
+
+    def _on_reply(self, reply):
+        try:
+            raw = bytes(reply.readAll()).decode("utf-8", "replace")
+            _, titles, descs, urls = json.loads(raw)
+        except Exception:
+            titles, urls, descs = [], [], []
+        finally:
+            reply.deleteLater()
+
+        self.list.clear()
+        if not titles:
+            self.list.addItem("No matching pages.")
+            return
+        for i, title in enumerate(titles):
+            it = QListWidgetItem(title)
+            if i < len(descs) and descs[i]:
+                it.setToolTip(descs[i])
+            if i < len(urls):
+                it.setData(Qt.ItemDataRole.UserRole, urls[i])
+            self.list.addItem(it)
+        # Load the top hit so the view isn't blank; the list switches pages.
+        if urls:
+            self.view.load(QUrl(urls[0]))
+            self.list.setCurrentRow(0)
+
+    def _open(self, item):
+        url = item.data(Qt.ItemDataRole.UserRole)
+        if url:
+            self.view.load(QUrl(url))
+
+
 class SuperLookup(QMainWindow):
     def __init__(self, profile=None):
         super().__init__()
         self.profile = profile
         self._config = load_config()
-        self.resources = merge_resources(self._config.get("resources"))
+        self.resources = merge_resources(
+            self._config.get("resources"), self._config.get("defaults_rev"))
         self._hotkey = None
         self.hotkey_qt = self._config.get("hotkey") or DEFAULT_HOTKEY_QT
         self.setWindowTitle("SuperLookup")
@@ -729,6 +817,7 @@ class SuperLookup(QMainWindow):
         layout.addWidget(self._note)
 
         self._pending = {}
+        self._last = ("", "nl", "en")  # last (query, from, to) for lazy tab loads
 
         if not HAVE_WEBENGINE:
             self.query.setEnabled(False)
@@ -858,14 +947,20 @@ class SuperLookup(QMainWindow):
         self._save()  # remember the language pair for next launch
 
         self.clear_tabs()
+        self._last = (query, frm, to)
         for res in self.resources:
             if not res.get("enabled", True):
                 continue
-            view = QWebEngineView()
-            if self.profile is not None:
-                view.setPage(QWebEnginePage(self.profile, view))
-            idx = self.tabs.addTab(view, f"{res['icon']}  {res['name']}")
-            self._pending[idx] = build_url(res, query, frm, to)
+            if res.get("wiki"):
+                tab = MediaWikiTab(res, self.profile)
+                idx = self.tabs.addTab(tab, f"{res['icon']}  {res['name']}")
+                self._pending[idx] = ("wiki", None)
+            else:
+                view = QWebEngineView()
+                if self.profile is not None:
+                    view.setPage(QWebEnginePage(self.profile, view))
+                idx = self.tabs.addTab(view, f"{res['icon']}  {res['name']}")
+                self._pending[idx] = ("url", build_url(res, query, frm, to))
 
         if self.tabs.count():
             self.tabs.setCurrentIndex(0)
@@ -877,6 +972,7 @@ class SuperLookup(QMainWindow):
             "from": self.from_cb.currentData(),
             "to": self.to_cb.currentData(),
             "hotkey": self.hotkey_qt,
+            "defaults_rev": DEFAULTS_REV,
         })
 
     def open_settings(self):
@@ -895,12 +991,16 @@ class SuperLookup(QMainWindow):
         self.load_tab(idx)
 
     def load_tab(self, idx):
-        url = self._pending.pop(idx, None)
-        if url is None:
+        pending = self._pending.pop(idx, None)
+        if pending is None:
             return
-        widget = self.tabs.widget(idx)
-        if isinstance(widget, QWebEngineView):
-            widget.load(QUrl(url))
+        kind, payload = pending
+        w = self.tabs.widget(idx)
+        if kind == "url" and isinstance(w, QWebEngineView):
+            w.load(QUrl(payload))
+        elif kind == "wiki" and isinstance(w, MediaWikiTab):
+            q, frm, to = self._last
+            w.search(q, frm, to)
 
 
 STYLE = """
@@ -963,6 +1063,7 @@ QListWidget {
 }
 QListWidget::item { padding: 5px 6px; border-radius: 6px; }
 QListWidget::item:selected { background: #eaf0fb; color: #111111; }
+QListWidget#wikilist { border: none; border-bottom: 1px solid #e1e1e1; border-radius: 0; }
 
 QScrollBar:vertical { border: none; background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: #cfd4dc; border-radius: 5px; min-height: 24px; }
