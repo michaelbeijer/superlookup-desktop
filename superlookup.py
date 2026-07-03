@@ -170,11 +170,21 @@ DEFAULT_RESOURCES = [
     {"id": "babelnet", "icon": "🌐", "name": "BabelNet",
      "url": "https://babelnet.org/search?word={query}&lang={sl_upper}&transLang={tl_upper}", "fmt": "iso2"},
     {"id": "wikipedia", "icon": "📖", "name": "Wikipedia",
-     "url": "https://{sl}.wikipedia.org/w/index.php?search={query}", "fmt": "iso2"},
+     "url": "https://{sl}.wikipedia.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2"},
     {"id": "wiktionary", "icon": "📓", "name": "Wiktionary",
-     "url": "https://{sl}.wiktionary.org/wiki/{query}", "fmt": "iso2"},
+     "url": "https://{sl}.wiktionary.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": "iso2"},
+    {"id": "wikidata", "icon": "🔗", "name": "Wikidata",
+     "url": "https://www.wikidata.org/w/index.php?search={query}&title=Special:Search&fulltext=1", "fmt": None},
+    {"id": "acronymfinder", "icon": "🔤", "name": "AcronymFinder",
+     "url": "https://www.acronymfinder.com/~/search/af.aspx?string=exact&Acronym={query}", "fmt": None},
+    {"id": "opus", "icon": "🗂️", "name": "OPUS Corpus",
+     "url": "https://opus.nlpl.eu/bin/opuscqp.pl?corpus=DGT;lang={sl};cqp={query};align={tl}", "fmt": "iso2"},
     {"id": "google", "icon": "🔍", "name": "Google",
      "url": "https://www.google.com/search?q={query}", "fmt": None},
+    {"id": "google_patents", "icon": "📜", "name": "Google Patents",
+     "url": "https://patents.google.com/?q=\"{query}\"", "fmt": None},
+    {"id": "github_code", "icon": "💻", "name": "GitHub Code",
+     "url": "https://github.com/search?q={query}&type=code", "fmt": None},
 ]
 
 
