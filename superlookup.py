@@ -668,6 +668,8 @@ class SuperLookup(QMainWindow):
 
         self.query = QLineEdit()
         self.query.setPlaceholderText("Search a term, then press Enter…")
+        self.query.setMinimumWidth(240)
+        self.query.setMaximumWidth(520)  # roomy but not the whole window wide
         self.query.returnPressed.connect(self.search)
 
         go = QPushButton("Search")
@@ -684,8 +686,9 @@ class SuperLookup(QMainWindow):
         bar.addWidget(QLabel("To"))
         bar.addWidget(self.to_cb)
         bar.addSpacing(8)
-        bar.addWidget(self.query, 1)
+        bar.addWidget(self.query)
         bar.addWidget(go)
+        bar.addStretch(1)
         bar.addWidget(settings_btn)
         layout.addLayout(bar)
 
@@ -862,6 +865,11 @@ def main():
         profile.setCachePath(os.path.join(WEBDATA_DIR, "cache"))
         profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        # Present a vanilla Chrome user-agent (drop the "QtWebEngine/x.y.z" token),
+        # so sites like Google flag the embedded browser as a bot less often — the
+        # main cause of the repeated captchas.
+        ua = re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent()).strip()
+        profile.setHttpUserAgent(ua)
         _PROFILE = profile
 
         _AD_INTERCEPTOR = AdBlocker()
