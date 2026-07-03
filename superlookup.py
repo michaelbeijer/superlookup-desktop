@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SuperLookup — standalone desktop mockup.
+"""SuperLookup — standalone desktop app.
 
 Type a term (or select one anywhere and press the global hotkey), pick a
 language pair, and every reference resource opens in its own *embedded* browser
@@ -233,7 +233,7 @@ class AdBlock:
                 with open(EASYLIST_CACHE, encoding="utf-8") as fh:
                     domains = {d.strip() for d in fh if d.strip()}
             else:
-                req = Request(EASYLIST_URL, headers={"User-Agent": "superlookup-mockup"})
+                req = Request(EASYLIST_URL, headers={"User-Agent": "superlookup-desktop"})
                 raw = urlopen(req, timeout=20).read().decode("utf-8", "replace")
                 domains = self._parse(raw)
                 try:
@@ -638,7 +638,7 @@ class SuperLookup(QMainWindow):
         self.resources = merge_resources(self._config.get("resources"))
         self._hotkey = None
         self.hotkey_qt = self._config.get("hotkey") or DEFAULT_HOTKEY_QT
-        self.setWindowTitle("SuperLookup — standalone mockup")
+        self.setWindowTitle("SuperLookup")
         self.resize(1150, 820)
 
         central = QWidget()

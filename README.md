@@ -1,7 +1,7 @@
-# SuperLookup — standalone desktop mockup
+# SuperLookup — standalone desktop app
 
-A quick, runnable prototype of a standalone **SuperLookup**, extracted from the
-SuperLookup feature in the Supervertaler Workbench.
+A standalone **SuperLookup** desktop app, extracted from the SuperLookup feature
+in the Supervertaler Workbench.
 
 Type a term (or select one anywhere and hit the global hotkey), pick a language
 pair, and every reference resource opens in its own **embedded browser tab** —
@@ -70,7 +70,7 @@ macOS / Linux runners — automatically, and attached to a Release when you push
   **EasyList** domain rules (cached to `easylist_domains.txt`, refreshed
   weekly). Plus a cosmetic stylesheet to collapse leftover ad gaps.
 
-## What's a mockup here (vs. the full idea)
+## Scope
 
 - **In:** search, language handling, embedded tabs, hotkey capture, ad-blocking.
 - **Not:** the local **termbase** / **translation-memory** tiers — by design, a
