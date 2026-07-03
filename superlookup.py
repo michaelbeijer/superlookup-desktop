@@ -397,11 +397,19 @@ if HAVE_WEBENGINE:
         def __init__(self, *args):
             super().__init__(*args)
             self._cf_seen = set()
+            self._first_done = False
             self.loadFinished.connect(self._maybe_escape_cf)
 
         def _maybe_escape_cf(self, ok):
+            # Leave the tab's FIRST page (the search-results page) alone — it's
+            # the reason the tab exists and usually loads fine. Only bounce the
+            # pages the user clicks *into* from there, which is where sites like
+            # ProZ throw a Cloudflare wall the embedded engine can't pass.
+            if not self._first_done:
+                self._first_done = True
+                return
             # Cloudflare challenge pages come back as HTTP 403, so `ok` is False
-            # even though the wall rendered fine — must NOT bail on that. The JS
+            # even though the wall rendered fine — don't bail on that. The JS
             # probe is harmless on genuine error/blank pages (returns false).
             url = self.url()
             us = url.toString()
@@ -1331,9 +1339,6 @@ def main():
         # so sites like Google flag the embedded browser as a bot less often — the
         # main cause of the repeated captchas.
         ua = re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent()).strip()
-        # The bundled engine reports an older Chromium build (which bot checks
-        # flag as stale); claim a current stable Chrome instead.
-        ua = re.sub(r"Chrome/[\d.]+", "Chrome/140.0.0.0", ua)
         profile.setHttpUserAgent(ua)
         _PROFILE = profile
 
