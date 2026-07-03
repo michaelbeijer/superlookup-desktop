@@ -1,0 +1,14 @@
+# persistent web sessions (cookies, logins, cache) — never commit
+webdata/
+
+# downloaded/parsed EasyList cache
+easylist_domains.txt
+
+# python
+__pycache__/
+*.pyc
+
+# build artifacts (PyInstaller, etc.)
+build/
+dist/
+*.spec
