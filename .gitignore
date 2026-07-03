@@ -7,6 +7,9 @@ easylist_domains.txt
 # per-user settings (enabled searches + custom ones)
 config.json
 
+# exported search sets (default filename)
+superlookup-searches.json
+
 # python
 __pycache__/
 *.pyc

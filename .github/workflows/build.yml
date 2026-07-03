@@ -1,0 +1,79 @@
+name: Build
+
+# Manual runs give downloadable binaries on the Actions run page.
+# Pushing a version tag (e.g. v0.1.0) also attaches them to a GitHub Release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # needed to create/attach releases
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            asset: SuperLookup-windows.zip
+          - os: macos-latest
+            name: macos
+            asset: SuperLookup-macos.zip
+          - os: ubuntu-latest
+            name: linux
+            asset: SuperLookup-linux.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # QtWebEngine (Chromium) needs these shared libs to import/build on Linux.
+      - name: System libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 libnspr4 libxcomposite1 libxdamage1 libxrandr2 \
+            libxkbcommon0 libgbm1 libasound2t64 libxtst6 libegl1 \
+            libxcb-cursor0 libxrender1 libxi6
+
+      - name: Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build (one-file, windowed)
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --name SuperLookup
+          --exclude-module PyQt5 --exclude-module PySide6 --exclude-module PySide2
+          superlookup.py
+
+      - name: Package
+        shell: bash
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            zip -r -y "../${{ matrix.asset }}" SuperLookup.app
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "../${{ matrix.asset }}" SuperLookup.exe
+          else
+            zip "../${{ matrix.asset }}" SuperLookup
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

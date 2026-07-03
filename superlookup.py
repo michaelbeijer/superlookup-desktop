@@ -306,25 +306,30 @@ def default_resources():
     return [dict(r, enabled=True) for r in DEFAULT_RESOURCES]
 
 
-def load_resources():
+def load_config():
     try:
         with open(CONFIG_PATH, encoding="utf-8") as fh:
-            saved = json.load(fh).get("resources")
-        if isinstance(saved, list) and saved:
-            seen = {r.get("id") for r in saved}
-            for d in default_resources():          # surface newly-shipped defaults
-                if d["id"] not in seen:
-                    saved.append(d)
-            return saved
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        pass
+        return {}
+
+
+def merge_resources(saved):
+    """The user's saved resources, with any newly-shipped defaults appended."""
+    if isinstance(saved, list) and saved:
+        seen = {r.get("id") for r in saved}
+        for d in default_resources():
+            if d["id"] not in seen:
+                saved.append(d)
+        return saved
     return default_resources()
 
 
-def save_resources(resources):
+def save_config(data):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
-            json.dump({"resources": resources}, fh, ensure_ascii=False, indent=2)
+            json.dump(data, fh, ensure_ascii=False, indent=2)
     except OSError as e:
         print(f"[config] could not save: {e}")
 
@@ -393,7 +398,7 @@ class SettingsDialog(QDialog):
     def __init__(self, resources, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SuperLookup — Settings")
-        self.resize(560, 520)
+        self.resize(640, 520)
         self.resources = [dict(r) for r in resources]
 
         v = QVBoxLayout(self)
@@ -413,6 +418,9 @@ class SettingsDialog(QDialog):
         dn = QPushButton("↓"); dn.setFixedWidth(32); dn.clicked.connect(lambda: self.move(1))
         row.addWidget(up)
         row.addWidget(dn)
+        defaults_btn = QPushButton("Restore defaults")
+        defaults_btn.clicked.connect(self.restore_defaults)
+        row.addWidget(defaults_btn)
         row.addStretch()
         for label, slot in (("Import…", self.do_import), ("Export…", self.do_export)):
             b = QPushButton(label)
@@ -486,6 +494,15 @@ class SettingsDialog(QDialog):
         self._reload()
         self.list.setCurrentRow(new)
 
+    def restore_defaults(self):
+        if QMessageBox.question(
+            self, "Restore defaults",
+            "Replace your list with the built-in searches? Your custom searches "
+            "and on/off choices will be lost.",
+        ) == QMessageBox.StandardButton.Yes:
+            self.resources = default_resources()
+            self._reload()
+
     def do_export(self):
         self._sync()
         path, _ = QFileDialog.getSaveFileName(
@@ -551,7 +568,8 @@ class SuperLookup(QMainWindow):
     def __init__(self, profile=None):
         super().__init__()
         self.profile = profile
-        self.resources = load_resources()
+        self._config = load_config()
+        self.resources = merge_resources(self._config.get("resources"))
         self.setWindowTitle("SuperLookup — standalone mockup")
         self.resize(1150, 820)
 
@@ -568,6 +586,13 @@ class SuperLookup(QMainWindow):
             self.to_cb.addItem(name, code)
         self.from_cb.setCurrentText("Dutch")
         self.to_cb.setCurrentText("English")
+        # Restore the last-used language pair, if any.
+        for combo, key in ((self.from_cb, "from"), (self.to_cb, "to")):
+            saved = self._config.get(key)
+            if saved:
+                i = combo.findData(saved)
+                if i >= 0:
+                    combo.setCurrentIndex(i)
 
         swap = QPushButton("⇄")
         swap.setFixedWidth(36)
@@ -695,6 +720,7 @@ class SuperLookup(QMainWindow):
             return
         frm = self.from_cb.currentData()
         to = self.to_cb.currentData()
+        self._save()  # remember the language pair for next launch
 
         self.clear_tabs()
         for res in self.resources:
@@ -710,11 +736,18 @@ class SuperLookup(QMainWindow):
             self.tabs.setCurrentIndex(0)
             self.load_tab(0)
 
+    def _save(self):
+        save_config({
+            "resources": self.resources,
+            "from": self.from_cb.currentData(),
+            "to": self.to_cb.currentData(),
+        })
+
     def open_settings(self):
         dlg = SettingsDialog(self.resources, self)
         if dlg.exec():
             self.resources = dlg.result_resources()
-            save_resources(self.resources)
+            self._save()
             if self.query.text().strip():
                 self.search()  # re-open tabs to reflect enable/disable changes
 
