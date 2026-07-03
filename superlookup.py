@@ -697,7 +697,10 @@ class MediaWikiTab(QWidget):
                f"&format=json&search={quote(query)}")
         self.list.clear()
         self.list.addItem("Searching…")
-        reply = self._nam.get(QNetworkRequest(QUrl(api)))
+        req = QNetworkRequest(QUrl(api))
+        # Wikimedia's API blocks requests without a descriptive User-Agent.
+        req.setRawHeader(b"User-Agent", b"SuperLookup-desktop (+https://superlookup.io)")
+        reply = self._nam.get(req)
         reply.finished.connect(lambda: self._on_reply(reply))
 
     def _on_reply(self, reply):
