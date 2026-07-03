@@ -373,7 +373,50 @@ if HAVE_WEBENGINE:
 
     class WebView(QWebEngineView):
         """Right-click adds 'Open in browser' for the current page (and any
-        link under the cursor), so you can pop out to your real browser."""
+        link under the cursor), so you can pop out to your real browser.
+
+        Also detects a Cloudflare "verify you are human" wall (which the
+        embedded engine can't pass) and bounces that page to the real browser
+        instead of leaving you stuck in the challenge loop."""
+
+        _CF_JS = (
+            "(function(){var t=document.title||'';"
+            "if(t.indexOf('Just a moment')===0||t.indexOf('Attention Required')===0)return true;"
+            "if(document.querySelector('#challenge-form,#challenge-running,#cf-challenge-running,.cf-turnstile'))return true;"
+            "var b=document.body?document.body.innerText:'';"
+            "return b.indexOf('Verify you are human')>=0&&b.indexOf('Cloudflare')>=0;})()"
+        )
+
+        def __init__(self, *args):
+            super().__init__(*args)
+            self._cf_seen = set()
+            self.loadFinished.connect(self._maybe_escape_cf)
+
+        def _maybe_escape_cf(self, ok):
+            if not ok:
+                return
+            url = self.url()
+            us = url.toString()
+            if not us or us in self._cf_seen:
+                return
+            self.page().runJavaScript(
+                self._CF_JS,
+                lambda hit, u=QUrl(url), us=us: self._on_cf(hit, u, us))
+
+        def _on_cf(self, hit, url, us):
+            if not hit:
+                return
+            self._cf_seen.add(us)
+            QDesktopServices.openUrl(url)
+            host = url.host()
+            self.setHtml(
+                "<body style='font-family:Segoe UI,Arial;padding:48px;color:#333;'>"
+                "<h2 style='margin:0 0 .4em;'>Opened in your browser ↗</h2>"
+                f"<p style='font-size:15px;color:#555;max-width:34em;'><b>{host}</b> "
+                "uses a human-verification check that blocks this embedded view, "
+                "so the page was opened in your default browser (where you're "
+                "signed in and it passes instantly).</p></body>", url)
+
         def contextMenuEvent(self, event):
             menu = self.createStandardContextMenu()
             menu.addSeparator()
