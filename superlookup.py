@@ -687,6 +687,14 @@ class SuperLookup(QMainWindow):
         settings_btn.setToolTip("Settings — enable/disable and manage searches")
         settings_btn.clicked.connect(self.open_settings)
 
+        help_btn = QPushButton("?")
+        help_btn.setObjectName("iconbtn")
+        help_btn.setFixedWidth(34)
+        help_btn.setToolTip("Help & about")
+        self._help_menu = self._build_help_menu()
+        help_btn.clicked.connect(lambda: self._help_menu.exec(
+            help_btn.mapToGlobal(help_btn.rect().bottomLeft())))
+
         bar.addWidget(QLabel("From"))
         bar.addWidget(self.from_cb)
         bar.addWidget(swap)
@@ -696,6 +704,7 @@ class SuperLookup(QMainWindow):
         bar.addWidget(self.query)
         bar.addWidget(go)
         bar.addStretch(1)
+        bar.addWidget(help_btn)
         bar.addWidget(settings_btn)
         layout.addLayout(bar)
 
@@ -747,24 +756,22 @@ class SuperLookup(QMainWindow):
             self.tray.activated.connect(self._tray_activated)
             self.tray.show()
 
-        self._build_menu()
         self._refresh_hotkey_ui()
 
-    def _build_menu(self):
-        help_menu = self.menuBar().addMenu("&Help")
+    def _build_help_menu(self):
+        m = QMenu(self)
 
         def link(label, url):
-            act = QAction(label, self)
-            act.triggered.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
-            help_menu.addAction(act)
+            m.addAction(label).triggered.connect(
+                lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
 
+        link("Help", WEBSITE + "/help")
         link("SuperLookup on the web", WEBSITE)
         link("Downloads && updates", REPO + "/releases/latest")
         link("Report an issue", REPO + "/issues")
-        help_menu.addSeparator()
-        about = QAction("About SuperLookup", self)
-        about.triggered.connect(self.show_about)
-        help_menu.addAction(about)
+        m.addSeparator()
+        m.addAction("About SuperLookup").triggered.connect(self.show_about)
+        return m
 
     def show_about(self):
         QMessageBox.about(
