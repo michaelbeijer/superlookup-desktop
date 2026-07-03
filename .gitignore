@@ -4,6 +4,9 @@ webdata/
 # downloaded/parsed EasyList cache
 easylist_domains.txt
 
+# per-user settings (enabled searches + custom ones)
+config.json
+
 # python
 __pycache__/
 *.pyc

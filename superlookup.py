@@ -35,6 +35,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QComboBox, QPushButton, QTabWidget, QLabel,
     QSystemTrayIcon, QMenu, QStyle,
+    QDialog, QListWidget, QListWidgetItem, QDialogButtonBox, QFormLayout,
+    QFileDialog, QMessageBox,
 )
 
 try:
@@ -123,7 +125,7 @@ def lang_code(code, fmt):
     return c
 
 
-RESOURCES = [
+DEFAULT_RESOURCES = [
     {"id": "superterm", "icon": "📚", "name": "Superterm",
      "url": "https://superterm.io/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
     {"id": "iate", "icon": "🇪🇺", "name": "IATE",
@@ -291,10 +293,265 @@ if HAVE_HOTKEY:
                 w.query.setFocus()
 
 
+# ── User config: which searches are enabled, plus custom ones ───────────────
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+
+
+def _slug(name):
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return s or "search"
+
+
+def default_resources():
+    return [dict(r, enabled=True) for r in DEFAULT_RESOURCES]
+
+
+def load_resources():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as fh:
+            saved = json.load(fh).get("resources")
+        if isinstance(saved, list) and saved:
+            seen = {r.get("id") for r in saved}
+            for d in default_resources():          # surface newly-shipped defaults
+                if d["id"] not in seen:
+                    saved.append(d)
+            return saved
+    except (OSError, ValueError):
+        pass
+    return default_resources()
+
+
+def save_resources(resources):
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"resources": resources}, fh, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"[config] could not save: {e}")
+
+
+class ResourceEditDialog(QDialog):
+    """Add or edit a single search (name, icon, URL template, language codes)."""
+
+    FORMATS = [
+        ("Auto / none (no language codes)", None),
+        ("ISO 639-1 — nl, en", "iso2"),
+        ("ISO 639-2/B — dut, eng (ProZ)", "iso3"),
+        ("ISO 639-3 — nld, eng (Juremy)", "iso639_3"),
+        ("Full name — dutch, english (Linguee)", "full_lower"),
+    ]
+
+    def __init__(self, resource=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit search" if resource else "Add search")
+        self.resize(540, 240)
+        self._orig = resource or {}
+        form = QFormLayout(self)
+        self.name = QLineEdit(self._orig.get("name", ""))
+        self.icon = QLineEdit(self._orig.get("icon", "🔎"))
+        self.icon.setMaxLength(4)
+        self.url = QLineEdit(self._orig.get("url", ""))
+        self.url.setPlaceholderText("https://example.com/search?q={query}&sl={sl}&tl={tl}")
+        self.fmt = QComboBox()
+        for label, val in self.FORMATS:
+            self.fmt.addItem(label, val)
+        cur = self._orig.get("fmt")
+        self.fmt.setCurrentIndex(next((i for i, (l, v) in enumerate(self.FORMATS) if v == cur), 0))
+        form.addRow("Name", self.name)
+        form.addRow("Icon", self.icon)
+        form.addRow("URL", self.url)
+        form.addRow("Language codes", self.fmt)
+        tip = QLabel("Placeholders: {query}, {sl}, {tl}, {sl_full}, {tl_full}, {sl_upper}, {tl_upper}")
+        tip.setStyleSheet("color:#666; font-size:11px;")
+        tip.setWordWrap(True)
+        form.addRow(tip)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self._ok)
+        bb.rejected.connect(self.reject)
+        form.addRow(bb)
+
+    def _ok(self):
+        if not self.name.text().strip() or not self.url.text().strip():
+            QMessageBox.warning(self, "Missing", "Name and URL are both required.")
+            return
+        self.accept()
+
+    def resource(self):
+        name = self.name.text().strip()
+        return {
+            "id": self._orig.get("id") or _slug(name),
+            "icon": self.icon.text().strip() or "🔎",
+            "name": name,
+            "url": self.url.text().strip(),
+            "fmt": self.fmt.currentData(),
+            "enabled": self._orig.get("enabled", True),
+        }
+
+
+class SettingsDialog(QDialog):
+    """Enable/disable, reorder, add/edit/remove, and import/export searches."""
+
+    def __init__(self, resources, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("SuperLookup — Settings")
+        self.resize(560, 520)
+        self.resources = [dict(r) for r in resources]
+
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel(
+            "Tick the searches you want as tabs. Add your own, reorder with ↑ / ↓, "
+            "and Import/Export to share them."))
+        self.list = QListWidget()
+        v.addWidget(self.list, 1)
+        self._reload()
+
+        row = QHBoxLayout()
+        for label, slot in (("Add…", self.add), ("Edit…", self.edit), ("Remove", self.remove)):
+            b = QPushButton(label)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        up = QPushButton("↑"); up.setFixedWidth(32); up.clicked.connect(lambda: self.move(-1))
+        dn = QPushButton("↓"); dn.setFixedWidth(32); dn.clicked.connect(lambda: self.move(1))
+        row.addWidget(up)
+        row.addWidget(dn)
+        row.addStretch()
+        for label, slot in (("Import…", self.do_import), ("Export…", self.do_export)):
+            b = QPushButton(label)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        v.addLayout(row)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def _reload(self):
+        self.list.clear()
+        for r in self.resources:
+            it = QListWidgetItem(f"{r.get('icon', '')}  {r['name']}")
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if r.get("enabled", True) else Qt.CheckState.Unchecked)
+            it.setData(Qt.ItemDataRole.UserRole, r)
+            self.list.addItem(it)
+
+    def _sync(self):
+        """Read the list widget (order + check states) back into self.resources."""
+        out = []
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            r = dict(it.data(Qt.ItemDataRole.UserRole))
+            r["enabled"] = it.checkState() == Qt.CheckState.Checked
+            out.append(r)
+        self.resources = out
+
+    def result_resources(self):
+        self._sync()
+        return self.resources
+
+    def add(self):
+        self._sync()
+        dlg = ResourceEditDialog(parent=self)
+        if dlg.exec():
+            self.resources.append(dlg.resource())
+            self._reload()
+            self.list.setCurrentRow(self.list.count() - 1)
+
+    def edit(self):
+        row = self.list.currentRow()
+        if row < 0:
+            return
+        self._sync()
+        dlg = ResourceEditDialog(self.resources[row], parent=self)
+        if dlg.exec():
+            self.resources[row] = dlg.resource()
+            self._reload()
+            self.list.setCurrentRow(row)
+
+    def remove(self):
+        row = self.list.currentRow()
+        if row < 0:
+            return
+        self._sync()
+        del self.resources[row]
+        self._reload()
+        self.list.setCurrentRow(min(row, self.list.count() - 1))
+
+    def move(self, delta):
+        row = self.list.currentRow()
+        new = row + delta
+        if row < 0 or not (0 <= new < self.list.count()):
+            return
+        self._sync()
+        self.resources[row], self.resources[new] = self.resources[new], self.resources[row]
+        self._reload()
+        self.list.setCurrentRow(new)
+
+    def do_export(self):
+        self._sync()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export searches", "superlookup-searches.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"resources": self.resources}, fh, ensure_ascii=False, indent=2)
+        except OSError as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+
+    def do_import(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import searches", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            incoming = data.get("resources") if isinstance(data, dict) else data
+            if not isinstance(incoming, list):
+                raise ValueError("no list of searches found in the file")
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Import failed", str(e))
+            return
+        self._sync()
+        index = {r.get("id"): i for i, r in enumerate(self.resources)}
+        added = updated = 0
+        for raw in incoming:
+            r = self._clean(raw)
+            if not r:
+                continue
+            if r["id"] in index:
+                self.resources[index[r["id"]]] = r
+                updated += 1
+            else:
+                index[r["id"]] = len(self.resources)
+                self.resources.append(r)
+                added += 1
+        self._reload()
+        QMessageBox.information(self, "Import complete", f"Added {added}, updated {updated}.")
+
+    @staticmethod
+    def _clean(raw):
+        if not isinstance(raw, dict):
+            return None
+        name = str(raw.get("name", "")).strip()
+        url = str(raw.get("url", "")).strip()
+        if not name or not url:
+            return None
+        fmt = raw.get("fmt")
+        return {
+            "id": raw.get("id") or _slug(name),
+            "icon": (str(raw.get("icon", "🔎")).strip() or "🔎")[:4],
+            "name": name,
+            "url": url,
+            "fmt": fmt if fmt in (None, "iso2", "iso3", "iso639_3", "full_lower") else None,
+            "enabled": bool(raw.get("enabled", True)),
+        }
+
+
 class SuperLookup(QMainWindow):
     def __init__(self, profile=None):
         super().__init__()
         self.profile = profile
+        self.resources = load_resources()
         self.setWindowTitle("SuperLookup — standalone mockup")
         self.resize(1150, 820)
 
@@ -323,6 +580,11 @@ class SuperLookup(QMainWindow):
         go = QPushButton("Search")
         go.clicked.connect(self.search)
 
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedWidth(36)
+        settings_btn.setToolTip("Settings — enable/disable and manage searches")
+        settings_btn.clicked.connect(self.open_settings)
+
         bar.addWidget(QLabel("From"))
         bar.addWidget(self.from_cb)
         bar.addWidget(swap)
@@ -331,6 +593,7 @@ class SuperLookup(QMainWindow):
         bar.addSpacing(8)
         bar.addWidget(self.query, 1)
         bar.addWidget(go)
+        bar.addWidget(settings_btn)
         layout.addLayout(bar)
 
         self.tabs = QTabWidget()
@@ -434,7 +697,9 @@ class SuperLookup(QMainWindow):
         to = self.to_cb.currentData()
 
         self.clear_tabs()
-        for res in RESOURCES:
+        for res in self.resources:
+            if not res.get("enabled", True):
+                continue
             view = QWebEngineView()
             if self.profile is not None:
                 view.setPage(QWebEnginePage(self.profile, view))
@@ -444,6 +709,14 @@ class SuperLookup(QMainWindow):
         if self.tabs.count():
             self.tabs.setCurrentIndex(0)
             self.load_tab(0)
+
+    def open_settings(self):
+        dlg = SettingsDialog(self.resources, self)
+        if dlg.exec():
+            self.resources = dlg.result_resources()
+            save_resources(self.resources)
+            if self.query.text().strip():
+                self.search()  # re-open tabs to reflect enable/disable changes
 
     def on_tab_changed(self, idx):
         self.load_tab(idx)
