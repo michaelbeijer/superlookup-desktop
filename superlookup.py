@@ -30,7 +30,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QComboBox, QPushButton, QTabWidget, QLabel,
@@ -58,6 +58,10 @@ try:
 except Exception:
     HAVE_HOTKEY = False
 
+
+VERSION = "0.1.2"
+WEBSITE = "https://superlookup.io"
+REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
 HOTKEY = "<ctrl>+<alt>+l"          # pynput fallback
 DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config
@@ -743,7 +747,35 @@ class SuperLookup(QMainWindow):
             self.tray.activated.connect(self._tray_activated)
             self.tray.show()
 
+        self._build_menu()
         self._refresh_hotkey_ui()
+
+    def _build_menu(self):
+        help_menu = self.menuBar().addMenu("&Help")
+
+        def link(label, url):
+            act = QAction(label, self)
+            act.triggered.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
+            help_menu.addAction(act)
+
+        link("SuperLookup on the web", WEBSITE)
+        link("Downloads && updates", REPO + "/releases/latest")
+        link("Report an issue", REPO + "/issues")
+        help_menu.addSeparator()
+        about = QAction("About SuperLookup", self)
+        about.triggered.connect(self.show_about)
+        help_menu.addAction(about)
+
+    def show_about(self):
+        QMessageBox.about(
+            self, "About SuperLookup",
+            f"<h3>SuperLookup {VERSION}</h3>"
+            "<p>One search box for a translator’s reference web — each site opens "
+            "in its own embedded, ad-free tab, summoned by a global hotkey.</p>"
+            f"<p>By <a href='https://beijer.uk'>Michael Beijer</a>. A companion to "
+            "<a href='https://supervertaler.com'>Supervertaler</a>.</p>"
+            f"<p><a href='{WEBSITE}'>superlookup.io</a> &nbsp;·&nbsp; "
+            f"<a href='{REPO}'>GitHub</a></p>")
 
     def _refresh_hotkey_ui(self):
         hk = self.hotkey_qt
