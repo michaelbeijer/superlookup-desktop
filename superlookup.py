@@ -198,6 +198,8 @@ DEFAULT_RESOURCES = [
      "url": "https://www.wordreference.com/{sl}{tl}/{query}", "fmt": "iso2"},
     {"id": "keybot", "icon": "🔑", "name": "Keybot",
      "url": "https://www.keybot.com/{sl_full}-{tl_full}/{query}.htm", "fmt": None},
+    {"id": "sensagent", "icon": "📐", "name": "Sensagent",
+     "url": "https://dictionary.sensagent.com/{query}/{sl}-{tl}/", "fmt": "iso2"},
     {"id": "bing_translator", "icon": "🌉", "name": "Bing Translator",
      "url": "https://www.bing.com/translator/?from={sl}&to={tl}&text={query}", "fmt": "iso2"},
     {"id": "twolingual", "icon": "🔀", "name": "2lingual",
@@ -380,11 +382,16 @@ if HAVE_WEBENGINE:
         instead of leaving you stuck in the challenge loop."""
 
         _CF_JS = (
-            "(function(){var t=document.title||'';"
-            "if(t.indexOf('Just a moment')===0||t.indexOf('Attention Required')===0)return true;"
-            "if(document.querySelector('#challenge-form,#challenge-running,#cf-challenge-running,.cf-turnstile'))return true;"
-            "var b=document.body?document.body.innerText:'';"
-            "return b.indexOf('Verify you are human')>=0&&b.indexOf('Cloudflare')>=0;})()"
+            "(function(){try{"
+            "var t=document.title||'';"
+            "if(/^(just a moment|attention required|access denied|please wait)/i.test(t))return true;"
+            "if(document.querySelector('iframe[src*=\"challenges.cloudflare.com\"],"
+            "#challenge-form,#challenge-running,#cf-challenge-running,.cf-turnstile,#turnstile-wrapper'))return true;"
+            "var b=(document.body&&document.body.innerText)||'';"
+            "return /performing security verification|checking your browser|"
+            "verify you are human|review the security of your connection|"
+            "uses a security service to protect|enable javascript and cookies to continue/i.test(b);"
+            "}catch(e){return false;}})()"
         )
 
         def __init__(self, *args):
@@ -498,11 +505,11 @@ if HAVE_HOTKEY:
 
 # ── User config: which searches are enabled, plus custom ones ───────────────
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-DEFAULTS_REV = 4  # bump when the built-in search set or their URLs change
+DEFAULTS_REV = 5  # bump when the built-in search set or their URLs change
 
 # Built-in searches that were shipped and later pulled. Dropped from any saved
 # set on load, so a retired search doesn't linger as if it were a custom one.
-RETIRED_IDS = {"sensagent"}
+RETIRED_IDS = set()
 
 
 def _slug(name):
@@ -1323,6 +1330,9 @@ def main():
         # so sites like Google flag the embedded browser as a bot less often — the
         # main cause of the repeated captchas.
         ua = re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent()).strip()
+        # The bundled engine reports an older Chromium build (which bot checks
+        # flag as stale); claim a current stable Chrome instead.
+        ua = re.sub(r"Chrome/[\d.]+", "Chrome/140.0.0.0", ua)
         profile.setHttpUserAgent(ua)
         _PROFILE = profile
 
