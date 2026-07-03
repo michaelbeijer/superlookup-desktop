@@ -119,6 +119,9 @@ ALLOW_HOSTS = frozenset({
     "europa.eu", "linguee.com", "proz.com", "reverso.net",
     "juremy.com", "babelnet.org", "wikipedia.org", "wiktionary.org",
     "google.com", "gstatic.com",
+    # Bot-protection challenge infrastructure — blocking any of it makes the
+    # "verify you are human" check (e.g. ProZ) loop forever.
+    "cloudflare.com", "hcaptcha.com", "recaptcha.net",
 })
 
 # Cosmetic filtering: collapse leftover ad containers (so blocked ads don't
@@ -350,9 +353,25 @@ if HAVE_WEBENGINE:
 
     class Page(QWebEnginePage):
         """Open would-be-new-window links (target=_blank / window.open) in the
-        same view, so clicking e.g. a ProZ result navigates in place."""
+        same view, so clicking e.g. a ProZ result navigates in place — and via
+        a real navigation, so it gets a history entry (Back works)."""
+        def __init__(self, profile, view):
+            super().__init__(profile, view)
+            self._view = view
+
         def createWindow(self, _type):
-            return self
+            # Catch the popup on a throwaway page, then load its target into
+            # the main view. This adds a proper history entry (unlike returning
+            # self), so right-click → Back returns to the results page.
+            catcher = QWebEnginePage(self.profile(), self._view)
+
+            def _redirect(url, _p=catcher):
+                if url.isValid() and not url.isEmpty():
+                    self._view.setUrl(url)
+                _p.deleteLater()
+
+            catcher.urlChanged.connect(_redirect)
+            return catcher
 
     class WebView(QWebEngineView):
         """Right-click adds 'Open in browser' for the current page (and any
