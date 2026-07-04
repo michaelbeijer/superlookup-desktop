@@ -8,12 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.9] — 2026-07-05
 
 ### Fixed
-- **macOS: hardened the global-hotkey copy against a remaining crash.** The copy
-  now presses `C` by its raw virtual keycode (`kVK_ANSI_C` = 8) instead of the
-  character `"c"`, so pynput never routes through the Carbon Text-Input-Source
-  APIs (`TSMGetInputSourceProperty`) that assert the main dispatch queue and
-  `SIGTRAP`. Moving the copy to the GUI thread (0.1.8) didn't always satisfy that
-  assertion; sending a raw keycode avoids the API path entirely.
+- **macOS: fixed the remaining global-hotkey crashes** (on pressing the
+  shortcut and on changing it in Settings). The 0.1.8 fix covered the copy
+  keystroke but not pynput's hotkey *listener*, which starts its own thread and
+  calls Carbon Text-Input-Source APIs from it (`keycode_context()` in pynput's
+  `_darwin.py`) — the same main-thread assertion trap, re-triggered on every
+  shortcut change because rebinding restarted the listener. macOS now uses
+  native main-thread NSEvent global/local monitors for hotkey detection and a
+  Quartz `CGEvent` (raw `kVK_ANSI_C` keycode) for the Cmd+C copy; pynput is no
+  longer used at all on macOS. Windows and Linux keep pynput unchanged.
+- macOS: changing the shortcut no longer restarts a listener thread — the
+  monitors persist and only the match target changes.
+
+### Added
+- macOS: function-key shortcuts (F1–F12) are matched by hardware keycode, and
+  held-down hotkeys no longer fire repeatedly (key-repeat is ignored).
 
 ## [0.1.8] — 2026-07-05
 
@@ -91,6 +100,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.9]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.4...v0.1.7
 [0.1.4]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.3...v0.1.4

@@ -18,7 +18,8 @@ browser tab won't.
 
 Grab a self-contained build for your OS from the
 [Releases](../../releases) page (or the latest
-[Actions run](../../actions) for bleeding-edge builds):
+[Actions run](../../actions) for bleeding-edge builds).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md).
 
 - **Windows** — `SuperLookup.exe`, just double-click.
 - **macOS** — `SuperLookup.app` (unsigned: right-click → Open the first time).

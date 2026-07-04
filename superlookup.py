@@ -621,6 +621,57 @@ if HAVE_WEBENGINE:
         return view
 
 
+# Native macOS global-hotkey support. pynput's listener and controller call
+# Carbon Text-Input-Source APIs from a background thread, which macOS 26 turns
+# into a hard crash (dispatch_assert_queue / TSMGetInputSourceProperty). On macOS
+# we instead use main-thread NSEvent monitors for detection and a Quartz CGEvent
+# for the Cmd+C copy — no pynput, no off-main-thread TIS calls. Win/Linux keep
+# pynput unchanged.
+IS_MAC = sys.platform == "darwin"
+HAVE_MAC_HOTKEY = False
+if IS_MAC:
+    try:
+        from AppKit import NSEvent
+        from Quartz import (
+            CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags,
+            kCGHIDEventTap,
+        )
+        HAVE_MAC_HOTKEY = True
+    except Exception:
+        HAVE_MAC_HOTKEY = False
+
+# Cocoa modifier-flag bits (device independent), key-down mask, Cmd flag, 'C' key.
+_NS_KEYDOWN_MASK = 1 << 10
+_NS_SHIFT, _NS_CONTROL, _NS_OPTION, _NS_COMMAND = 1 << 17, 1 << 18, 1 << 19, 1 << 20
+_NS_MOD_MASK = _NS_SHIFT | _NS_CONTROL | _NS_OPTION | _NS_COMMAND
+_CG_FLAG_COMMAND = 1 << 20
+_KVK_ANSI_C = 0x08
+
+
+# Hardware keycodes for function keys (kVK_F1..F12) — F-keys produce no useful
+# character, so they're matched by NSEvent keyCode instead.
+_MAC_FKEY_CODES = {"f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96,
+                   "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
+                   "f11": 103, "f12": 111}
+
+
+def _mac_combo_to_mask_key(combo):
+    """Parse a pynput-format combo ('<ctrl>+<alt>+l') into (modifier_mask,
+    key_char, fkey_code). Character keys match by charactersIgnoringModifiers;
+    F-keys match by hardware keyCode. Both None if the combo is unsupported."""
+    mask, key, fcode = 0, None, None
+    for tok in (combo or "").split("+"):
+        t = tok.strip().lower()
+        if   t == "<ctrl>":  mask |= _NS_CONTROL
+        elif t == "<alt>":   mask |= _NS_OPTION
+        elif t == "<shift>": mask |= _NS_SHIFT
+        elif t == "<cmd>":   mask |= _NS_COMMAND
+        elif t.startswith("<") and t.endswith(">") and t[1:-1] in _MAC_FKEY_CODES:
+            fcode = _MAC_FKEY_CODES[t[1:-1]]
+        elif len(t) == 1:    key = t
+    return mask, key, fcode
+
+
 # ── Global hotkey + clipboard capture ───────────────────────────────────────
 if HAVE_HOTKEY:
     class Hotkey(QObject):
@@ -628,24 +679,25 @@ if HAVE_HOTKEY:
         then bring SuperLookup to the front and search it."""
         _fired = pyqtSignal()        # from the pynput listener thread
 
-        # macOS copies with Cmd+C; Windows/Linux with Ctrl+C.
+        # Windows/Linux copy with Ctrl+C via pynput. On macOS pynput is not
+        # used at all (see the NSEvent/CGEvent implementation below).
         _COPY_MOD = _KbKey.cmd if sys.platform == "darwin" else _KbKey.ctrl
-        # On macOS press C by its raw virtual keycode (kVK_ANSI_C = 8), NOT the
-        # character "c". Pressing a character makes pynput translate it to a
-        # keycode via Carbon Text-Input-Source APIs (TSMGetInputSourceProperty),
-        # which assert the main dispatch queue and SIGTRAP. A raw keycode skips
-        # that path entirely, on any thread. Windows/Linux keep the character.
-        _C_KEY = _pk.KeyCode.from_vk(8) if sys.platform == "darwin" else "c"
 
         def __init__(self, window, combo):
             super().__init__()
             self.window = window
-            self._kbd = _KbController()
             self._listener = None
+            self._mac_monitors = []
+            self._mac_mods, self._mac_key, self._mac_fcode = 0, None, None
+            # pynput's Controller is only used off the macOS path.
+            self._kbd = None if (IS_MAC and HAVE_MAC_HOTKEY) else _KbController()
             self._fired.connect(self._on_fired)
             self.rebind(combo)
 
         def rebind(self, combo):
+            if IS_MAC and HAVE_MAC_HOTKEY:
+                self._mac_rebind(combo)
+                return
             if self._listener is not None:
                 try:
                     self._listener.stop()
@@ -659,21 +711,81 @@ if HAVE_HOTKEY:
             except Exception as e:
                 print(f"[hotkey] could not register {combo!r}: {e}")
 
+        # ── macOS native hotkey: main-thread NSEvent monitors ────────────────
+        def _mac_rebind(self, combo):
+            for m in self._mac_monitors:
+                try:
+                    NSEvent.removeMonitor_(m)
+                except Exception:
+                    pass
+            self._mac_monitors = []
+            self._mac_mods, self._mac_key, self._mac_fcode = \
+                _mac_combo_to_mask_key(combo)
+            if not self._mac_key and self._mac_fcode is None:
+                print(f"[hotkey] unsupported macOS combo: {combo!r}")
+                return
+            try:
+                g = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                    _NS_KEYDOWN_MASK, self._mac_on_global)
+                l = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+                    _NS_KEYDOWN_MASK, self._mac_on_local)
+                self._mac_monitors = [m for m in (g, l) if m is not None]
+            except Exception as e:
+                print(f"[hotkey] could not register macOS monitor: {e}")
+
+        def _mac_match(self, event):
+            # Called on the main thread by the NSEvent monitors.
+            try:
+                if event.isARepeat():
+                    return
+                if (int(event.modifierFlags()) & _NS_MOD_MASK) != self._mac_mods:
+                    return
+                if self._mac_fcode is not None:
+                    if int(event.keyCode()) == self._mac_fcode:
+                        self._on_fired()
+                    return
+                ch = event.charactersIgnoringModifiers()
+                if ch and self._mac_key and ch.lower() == self._mac_key:
+                    self._on_fired()
+            except Exception:
+                pass
+
+        def _mac_on_global(self, event):   # another app focused; return ignored
+            self._mac_match(event)
+
+        def _mac_on_local(self, event):    # our app focused; must return event
+            self._mac_match(event)
+            return event
+
         def _on_fired(self):
-            # Runs on the GUI thread (queued from the pynput listener). Drive the
-            # copy via QTimer so key synthesis stays on the MAIN thread: pynput
-            # translates the character to a keycode through Carbon Text-Input-
-            # Source APIs, which assert main-thread on macOS and SIGTRAP if run
-            # from a worker thread. QTimer also yields time without blocking.
+            # Always reached on the GUI (main) thread — from the macOS NSEvent
+            # monitor directly, or queued from the pynput listener via _fired.
+            # Chain the copy via QTimer so any key synthesis stays on the main
+            # thread and the hotkey keys get a moment to release first.
             QTimer.singleShot(250, self._send_copy)
 
         def _send_copy(self):
+            if IS_MAC and HAVE_MAC_HOTKEY:
+                self._mac_send_copy()
+            else:
+                try:
+                    self._kbd.press(self._COPY_MOD); self._kbd.press("c")
+                    self._kbd.release("c"); self._kbd.release(self._COPY_MOD)
+                except Exception:
+                    pass
+            QTimer.singleShot(200, self._read_clip)
+
+        def _mac_send_copy(self):
+            # Synthesize Cmd+C via Quartz — no pynput, no Carbon TIS calls.
             try:
-                self._kbd.press(self._COPY_MOD); self._kbd.press(self._C_KEY)
-                self._kbd.release(self._C_KEY); self._kbd.release(self._COPY_MOD)
+                down = CGEventCreateKeyboardEvent(None, _KVK_ANSI_C, True)
+                CGEventSetFlags(down, _CG_FLAG_COMMAND)
+                CGEventPost(kCGHIDEventTap, down)
+                up = CGEventCreateKeyboardEvent(None, _KVK_ANSI_C, False)
+                CGEventSetFlags(up, _CG_FLAG_COMMAND)
+                CGEventPost(kCGHIDEventTap, up)
             except Exception:
                 pass
-            QTimer.singleShot(200, self._read_clip)
 
         def _read_clip(self):
             try:
