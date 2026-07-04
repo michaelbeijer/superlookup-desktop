@@ -23,6 +23,7 @@ Needs:
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -60,7 +61,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -91,7 +92,54 @@ def qt_to_pynput(seq):
         out.append(f"<{key.lower().replace(' ', '_')}>")
     return "+".join(out)
 
-DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+# ── User data location ──────────────────────────────────────────────────────
+# Settings, cookies/logins and caches live in a per-user folder (NOT next to the
+# executable), matching Supervertaler's convention:
+#   Windows: %APPDATA%\SuperLookup   macOS: ~/Library/Application Support/SuperLookup
+#   Linux:   ~/.config/SuperLookup
+# Anchoring here (rather than __file__) is what makes persistence work: a
+# PyInstaller --onefile build otherwise writes into its temp _MEIxxxx dir (wiped
+# every run), and a macOS .app can't be written into without breaking its code
+# signature. It also lets a future auto-updater overwrite the app without
+# touching settings. Bundled read-only assets use resource_path() instead.
+def user_data_dir(app="SuperLookup"):
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser(r"~\AppData\Roaming")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    d = os.path.join(base, app)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def resource_path(rel):
+    """Absolute path to a READ-ONLY bundled asset — works both in dev and in a
+    PyInstaller build, where bundled files live under sys._MEIPASS."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
+def _migrate_legacy_data(new_dir):
+    """One-time carry-over of pre-0.1.6 data that older *source* runs wrote next
+    to the script, so existing searches, zoom, hotkey and logins survive the
+    move to the per-user folder. (Packaged builds never persisted, so there's
+    nothing to migrate there.)"""
+    old_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.abspath(old_dir) == os.path.abspath(new_dir):
+        return
+    for name in ("config.json", "easylist_domains.txt", "webdata"):
+        src, dst = os.path.join(old_dir, name), os.path.join(new_dir, name)
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                shutil.copytree(src, dst) if os.path.isdir(src) else shutil.copy2(src, dst)
+            except OSError:
+                pass
+
+
+DATA_DIR = user_data_dir()
+_migrate_legacy_data(DATA_DIR)
 WEBDATA_DIR = os.path.join(DATA_DIR, "webdata")  # persistent cookies/logins/cache
 EASYLIST_URL = "https://easylist.to/easylist/easylist.txt"
 EASYLIST_CACHE = os.path.join(DATA_DIR, "easylist_domains.txt")
