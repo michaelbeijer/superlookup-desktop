@@ -24,9 +24,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import zipfile
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -61,12 +64,114 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
 HOTKEY = "<ctrl>+<alt>+l"          # pynput fallback
 DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config
+
+
+# ── Auto-update ─────────────────────────────────────────────────────────────
+# Checks GitHub Releases for a newer tag, downloads the per-OS asset, and hands
+# off to a tiny detached helper that waits for this process to exit, swaps the
+# new build over the old, and relaunches. Only runs in a packaged (frozen) build;
+# from source it just points you at `git pull`. Safe because settings live in the
+# per-user data folder, so replacing the app never touches them.
+GITHUB_LATEST_API = "https://api.github.com/repos/michaelbeijer/superlookup-desktop/releases/latest"
+UPDATE_ASSET = {"win32": "SuperLookup-windows.zip",
+                "darwin": "SuperLookup-macos.zip"}.get(sys.platform, "SuperLookup-linux.zip")
+
+
+def _version_tuple(s):
+    s = (s or "").lstrip("vV").split("-")[0].split("+")[0]
+    out = []
+    for part in s.split("."):
+        try:
+            out.append(int(part))
+        except ValueError:
+            out.append(0)
+    return tuple(out) or (0,)
+
+
+def fetch_latest_release():
+    """Return {'version','tag','asset_url','notes_url'} if GitHub's latest
+    release is newer than VERSION, else None. Network-bound — call off the UI
+    thread."""
+    try:
+        req = Request(GITHUB_LATEST_API, headers={
+            "User-Agent": "SuperLookup", "Accept": "application/vnd.github+json"})
+        data = json.loads(urlopen(req, timeout=15).read().decode("utf-8"))
+    except Exception:
+        return None
+    tag = data.get("tag_name") or ""
+    if _version_tuple(tag) <= _version_tuple(VERSION):
+        return None
+    asset_url = next((a.get("browser_download_url") for a in data.get("assets", [])
+                      if a.get("name") == UPDATE_ASSET), None)
+    return {"version": tag.lstrip("vV"), "tag": tag, "asset_url": asset_url,
+            "notes_url": data.get("html_url") or (REPO + "/releases/latest")}
+
+
+def _install_root():
+    """(kind, path) for the current packaged app. 'exe'/'bin' → path is the
+    executable to replace; 'app' → path is the macOS .app bundle to replace."""
+    exe = os.path.abspath(sys.executable)
+    if sys.platform == "darwin" and ".app/Contents/MacOS/" in exe:
+        return "app", exe.split(".app/Contents/MacOS/")[0] + ".app"
+    return ("exe" if sys.platform == "win32" else "bin"), exe
+
+
+def apply_update(zip_path):
+    """Extract the release zip and launch a detached helper that waits for this
+    process to exit, swaps the new build over the old, and relaunches. Raises on
+    any problem BEFORE the app quits (so a bad download leaves the current
+    version intact). Returns True once the helper is launched — caller then quits."""
+    kind, target = _install_root()
+    staging = tempfile.mkdtemp(prefix="superlookup-update-")
+    with zipfile.ZipFile(zip_path) as zf:      # raises BadZipFile on a corrupt download
+        zf.extractall(staging)
+    pid = os.getpid()
+
+    if kind == "exe":
+        new = os.path.join(staging, "SuperLookup.exe")
+        if not os.path.exists(new):
+            raise FileNotFoundError("SuperLookup.exe missing from the downloaded package")
+        bat = os.path.join(staging, "_swap.bat")
+        with open(bat, "w", encoding="ascii") as fh:
+            fh.write("@echo off\r\n:loop\r\n"
+                     f'tasklist /fi "pid eq {pid}" | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto loop)\r\n'
+                     f'copy /y "{new}" "{target}" >nul\r\n'
+                     f'start "" "{target}"\r\ndel "%~f0"\r\n')
+        subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008 | 0x08000000)
+        return True
+
+    if kind == "app":
+        new = os.path.join(staging, "SuperLookup.app")
+        if not os.path.isdir(new):
+            raise FileNotFoundError("SuperLookup.app missing from the downloaded package")
+        sh = os.path.join(staging, "_swap.sh")
+        with open(sh, "w") as fh:
+            fh.write("#!/bin/sh\n"
+                     f'while kill -0 {pid} 2>/dev/null; do sleep 0.5; done\n'
+                     f'/usr/bin/ditto "{new}" "{target}.new" && rm -rf "{target}" && mv "{target}.new" "{target}"\n'
+                     f'open "{target}"\nrm -- "$0"\n')
+        os.chmod(sh, 0o755)
+        subprocess.Popen(["/bin/sh", sh], start_new_session=True)
+        return True
+
+    new = os.path.join(staging, "SuperLookup")   # linux binary
+    if not os.path.exists(new):
+        raise FileNotFoundError("SuperLookup binary missing from the downloaded package")
+    sh = os.path.join(staging, "_swap.sh")
+    with open(sh, "w") as fh:
+        fh.write("#!/bin/sh\n"
+                 f'while kill -0 {pid} 2>/dev/null; do sleep 0.5; done\n'
+                 f'cp "{new}" "{target}" && chmod +x "{target}"\n'
+                 f'"{target}" &\nrm -- "$0"\n')
+    os.chmod(sh, 0o755)
+    subprocess.Popen(["/bin/sh", sh], start_new_session=True)
+    return True
 
 
 def qt_to_pynput(seq):
@@ -1003,9 +1108,16 @@ class MediaWikiTab(QWidget):
 
 
 class SuperLookup(QMainWindow):
+    # Auto-update signals (emitted from background threads, handled on the UI thread).
+    _update_found = pyqtSignal(dict)     # a newer release exists ({} extra key "_manual" if user-triggered)
+    _update_none = pyqtSignal()          # manual check found nothing newer
+    _dl_progress = pyqtSignal(int)       # download percentage
+    _dl_done = pyqtSignal(str, str)      # (zip_path, error) — both "" means cancelled
+
     def __init__(self, profile=None):
         super().__init__()
         self.profile = profile
+        self._update_info = None
         self._config = load_config()
         self.resources = merge_resources(
             self._config.get("resources"), self._config.get("defaults_rev"))
@@ -1060,6 +1172,12 @@ class SuperLookup(QMainWindow):
         settings_btn.setToolTip("Settings — enable/disable and manage searches")
         settings_btn.clicked.connect(self.open_settings)
 
+        self.update_btn = QPushButton("⬆ Update")
+        self.update_btn.setObjectName("updatebtn")
+        self.update_btn.setToolTip("A new version is available — click to install")
+        self.update_btn.clicked.connect(lambda: self._show_update_dialog(self._update_info))
+        self.update_btn.hide()
+
         help_btn = QPushButton("?")
         help_btn.setObjectName("iconbtn")
         help_btn.setFixedWidth(34)
@@ -1077,6 +1195,7 @@ class SuperLookup(QMainWindow):
         bar.addWidget(self.query)
         bar.addWidget(go)
         bar.addStretch(1)
+        bar.addWidget(self.update_btn)
         bar.addWidget(help_btn)
         bar.addWidget(settings_btn)
         layout.addLayout(bar)
@@ -1132,6 +1251,118 @@ class SuperLookup(QMainWindow):
 
         self._refresh_hotkey_ui()
 
+        # Auto-update: wire signals and kick off a silent background check.
+        self._update_found.connect(self._on_update_found)
+        self._update_none.connect(lambda: QMessageBox.information(
+            self, "SuperLookup", f"You’re on the latest version ({VERSION})."))
+        self._dl_progress.connect(lambda pct: self._dl_dialog and self._dl_dialog.setValue(pct))
+        self._dl_done.connect(self._on_dl_done)
+        self._dl_dialog = None
+        self._check_for_updates(manual=False)
+
+    # ── Auto-update ─────────────────────────────────────────────────────────
+    def _check_for_updates(self, manual=False):
+        def work():
+            info = fetch_latest_release()
+            if info:
+                if manual:
+                    info = dict(info, _manual=True)
+                self._update_found.emit(info)
+            elif manual:
+                self._update_none.emit()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_found(self, info):
+        self._update_info = info
+        self.update_btn.setText(f"⬆ Update to {info['version']}")
+        self.update_btn.show()
+        if info.get("_manual"):
+            self._show_update_dialog(info)
+
+    def _show_update_dialog(self, info):
+        if not info:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Update available")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<b>SuperLookup {info['version']}</b> is available "
+                    f"(you have {VERSION}).")
+        whatsnew = box.addButton("What’s new", QMessageBox.ButtonRole.ActionRole)
+        if not getattr(sys, "frozen", False):
+            box.setInformativeText("You’re running from source — update with "
+                                   "<code>git pull</code>.")
+            box.addButton("OK", QMessageBox.ButtonRole.RejectRole)
+        elif not info.get("asset_url"):
+            box.setInformativeText("This release has no installer for your OS yet — "
+                                   "open the releases page to grab it manually.")
+            box.addButton("Open releases", QMessageBox.ButtonRole.AcceptRole).setProperty("act", "open")
+            box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        else:
+            box.setInformativeText("Install it now? SuperLookup will download the "
+                                   "update, replace itself, and reopen. Your settings "
+                                   "and logins are kept.")
+            box.addButton("Install now", QMessageBox.ButtonRole.AcceptRole).setProperty("act", "install")
+            box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is whatsnew:
+            QDesktopServices.openUrl(QUrl(info["notes_url"]))
+        elif clicked and clicked.property("act") == "open":
+            QDesktopServices.openUrl(QUrl(info["notes_url"]))
+        elif clicked and clicked.property("act") == "install":
+            self._do_install(info)
+
+    def _do_install(self, info):
+        from PyQt6.QtWidgets import QProgressDialog
+        self._dl_dialog = QProgressDialog("Downloading update…", "Cancel", 0, 100, self)
+        self._dl_dialog.setWindowTitle("Updating SuperLookup")
+        self._dl_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._dl_dialog.setMinimumDuration(0)
+        self._dl_cancel = False
+        self._dl_dialog.canceled.connect(lambda: setattr(self, "_dl_cancel", True))
+        dest = os.path.join(tempfile.gettempdir(), UPDATE_ASSET)
+
+        def work():
+            try:
+                req = Request(info["asset_url"], headers={"User-Agent": "SuperLookup"})
+                with urlopen(req, timeout=30) as resp, open(dest, "wb") as fh:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    got = 0
+                    while not self._dl_cancel:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            self._dl_progress.emit(int(got * 100 / total))
+                self._dl_done.emit("" if self._dl_cancel else dest, "")
+            except Exception as e:
+                self._dl_done.emit("", str(e))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_dl_done(self, zip_path, err):
+        if self._dl_dialog:
+            self._dl_dialog.close()
+            self._dl_dialog = None
+        if err:
+            QMessageBox.warning(self, "Update failed",
+                                f"Couldn’t download the update:\n{err}")
+            return
+        if not zip_path:   # cancelled
+            return
+        try:
+            launched = apply_update(zip_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Update failed",
+                                f"Downloaded, but couldn’t apply the update:\n{e}\n\n"
+                                "Your current version is untouched.")
+            return
+        if launched:
+            app = QApplication.instance()
+            app.setQuitOnLastWindowClosed(True)
+            app.quit()
+
     def _build_help_menu(self):
         m = QMenu(self)
 
@@ -1144,6 +1375,8 @@ class SuperLookup(QMainWindow):
         link("Downloads && updates", REPO + "/releases/latest")
         link("Report an issue", REPO + "/issues")
         m.addSeparator()
+        m.addAction("Check for updates…").triggered.connect(
+            lambda _=False: self._check_for_updates(manual=True))
         m.addAction("About SuperLookup").triggered.connect(self.show_about)
         return m
 
@@ -1330,6 +1563,11 @@ QPushButton#go:hover { background: #2f5cbb; border-color: #2f5cbb; }
 QPushButton#go:pressed { background: #274ea3; }
 
 QPushButton#iconbtn { padding: 4px 0; font-size: 14px; }
+QPushButton#updatebtn {
+    background: #1a7f5a; border: 1px solid #1a7f5a; color: #ffffff;
+    font-weight: 600; padding: 6px 12px; border-radius: 8px;
+}
+QPushButton#updatebtn:hover { background: #16704f; border-color: #16704f; }
 
 QTabWidget::pane { border: none; border-top: 1px solid #cfd5de; background: #ffffff; }
 QTabBar { qproperty-drawBase: 0; }
