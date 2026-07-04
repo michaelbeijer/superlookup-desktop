@@ -3,7 +3,7 @@
 
 Type a term (or select one anywhere and press the global hotkey), pick a
 language pair, and every reference resource opens in its own *embedded* browser
-tab — Superterm, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
+tab — Beijerterm, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
 Wiktionary, Google — with ads and trackers blocked. A desktop app can embed a
 real (top-level) browser view, which a website can't: sites block being put in
 an <iframe>.
@@ -60,7 +60,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -111,11 +111,11 @@ BUILTIN_AD_HOSTS = frozenset({
 })
 
 # Never block these — the resource sites and their APIs. EasyList is aggressive
-# and includes broad entries (e.g. "workers.dev", which is where Superterm's own
+# and includes broad entries (e.g. "workers.dev", which is where Beijerterm's own
 # search API lives), so an allowlist keeps core functionality working. Ads live
 # on separate domains, so they're still blocked.
 ALLOW_HOSTS = frozenset({
-    "superterm.io", "michaelbeijer-co-uk.workers.dev",
+    "beijerterm.com", "superterm.io", "michaelbeijer-co-uk.workers.dev",
     "europa.eu", "linguee.com", "proz.com", "reverso.net",
     "juremy.com", "babelnet.org", "wikipedia.org", "wiktionary.org",
     "google.com", "gstatic.com",
@@ -159,8 +159,8 @@ def lang_code(code, fmt):
 
 
 DEFAULT_RESOURCES = [
-    {"id": "superterm", "icon": "📚", "name": "Superterm",
-     "url": "https://superterm.io/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
+    {"id": "superterm", "icon": "📚", "name": "Beijerterm",
+     "url": "https://beijerterm.com/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
     {"id": "iate", "icon": "🇪🇺", "name": "IATE",
      "url": "https://iate.europa.eu/search/byUrl?term={query}&sl={sl}&tl={tl}", "fmt": "iso2"},
     {"id": "linguee", "icon": "📗", "name": "Linguee",
@@ -514,7 +514,7 @@ if HAVE_HOTKEY:
 
 # ── User config: which searches are enabled, plus custom ones ───────────────
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-DEFAULTS_REV = 5  # bump when the built-in search set or their URLs change
+DEFAULTS_REV = 6  # bump when the built-in search set or their URLs change
 
 # Built-in searches that were shipped and later pulled. Dropped from any saved
 # set on load, so a retired search doesn't linger as if it were a custom one.
@@ -672,7 +672,7 @@ class SettingsDialog(QDialog):
         z_row.addStretch(1)
         v.addLayout(z_row)
         z_hint = QLabel(
-            "Applied to every search tab. Handy for sites like Superterm that "
+            "Applied to every search tab. Handy for sites like Beijerterm that "
             "show more when zoomed out. (Ctrl +/– still zooms a single tab.)")
         z_hint.setStyleSheet("color:#666; font-size:11px;")
         z_hint.setWordWrap(True)
