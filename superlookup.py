@@ -1220,13 +1220,17 @@ class SuperLookup(QMainWindow):
                 self.search()  # re-open tabs to reflect enable/disable changes
 
     def _set_tab_icon(self, widget, icon):
-        """Show a loaded page's real favicon on its tab (keeps the emoji in the
-        label as the pre-load placeholder)."""
+        """Show a loaded page's real favicon on its tab. The emoji is only a
+        pre-load placeholder in the tab text, so drop it once the real favicon
+        arrives — otherwise the tab shows both the favicon and the emoji."""
         if icon is None or icon.isNull():
             return
         i = self.tabs.indexOf(widget)
         if i >= 0:
             self.tabs.setTabIcon(i, icon)
+            text = self.tabs.tabText(i)
+            if "  " in text:  # strip the "{emoji}  " placeholder prefix
+                self.tabs.setTabText(i, text.split("  ", 1)[1])
 
     def on_tab_changed(self, idx):
         self.load_tab(idx)
