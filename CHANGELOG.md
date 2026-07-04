@@ -5,6 +5,16 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] — 2026-07-05
+
+### Fixed
+- **macOS: hardened the global-hotkey copy against a remaining crash.** The copy
+  now presses `C` by its raw virtual keycode (`kVK_ANSI_C` = 8) instead of the
+  character `"c"`, so pynput never routes through the Carbon Text-Input-Source
+  APIs (`TSMGetInputSourceProperty`) that assert the main dispatch queue and
+  `SIGTRAP`. Moving the copy to the GUI thread (0.1.8) didn't always satisfy that
+  assertion; sending a raw keycode avoids the API path entirely.
+
 ## [0.1.8] — 2026-07-05
 
 ### Fixed

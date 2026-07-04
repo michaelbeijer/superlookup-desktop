@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -630,6 +630,12 @@ if HAVE_HOTKEY:
 
         # macOS copies with Cmd+C; Windows/Linux with Ctrl+C.
         _COPY_MOD = _KbKey.cmd if sys.platform == "darwin" else _KbKey.ctrl
+        # On macOS press C by its raw virtual keycode (kVK_ANSI_C = 8), NOT the
+        # character "c". Pressing a character makes pynput translate it to a
+        # keycode via Carbon Text-Input-Source APIs (TSMGetInputSourceProperty),
+        # which assert the main dispatch queue and SIGTRAP. A raw keycode skips
+        # that path entirely, on any thread. Windows/Linux keep the character.
+        _C_KEY = _pk.KeyCode.from_vk(8) if sys.platform == "darwin" else "c"
 
         def __init__(self, window, combo):
             super().__init__()
@@ -663,8 +669,8 @@ if HAVE_HOTKEY:
 
         def _send_copy(self):
             try:
-                self._kbd.press(self._COPY_MOD); self._kbd.press("c")
-                self._kbd.release("c"); self._kbd.release(self._COPY_MOD)
+                self._kbd.press(self._COPY_MOD); self._kbd.press(self._C_KEY)
+                self._kbd.release(self._C_KEY); self._kbd.release(self._COPY_MOD)
             except Exception:
                 pass
             QTimer.singleShot(200, self._read_clip)
