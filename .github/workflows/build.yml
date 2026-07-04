@@ -73,7 +73,11 @@ jobs:
           path: ${{ matrix.asset }}
 
       - name: Attach to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
+        # macOS is skipped on purpose: its release asset is a *signed + notarized*
+        # SuperLookup-macos.dmg built by hand on a Mac (CI can't sign) and uploaded
+        # manually. CI still builds/uploads the unsigned macOS zip as a workflow
+        # artifact for testing — it just doesn't go on the release.
+        if: startsWith(github.ref, 'refs/tags/') && runner.os != 'macOS'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}

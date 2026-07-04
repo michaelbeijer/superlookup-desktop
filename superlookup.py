@@ -79,8 +79,10 @@ DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config
 # from source it just points you at `git pull`. Safe because settings live in the
 # per-user data folder, so replacing the app never touches them.
 GITHUB_LATEST_API = "https://api.github.com/repos/michaelbeijer/superlookup-desktop/releases/latest"
+# macOS ships a *signed + notarized* .dmg built by hand on a Mac (CI can't sign),
+# so the updater mounts it rather than unzipping. Windows/Linux are CI zips.
 UPDATE_ASSET = {"win32": "SuperLookup-windows.zip",
-                "darwin": "SuperLookup-macos.zip"}.get(sys.platform, "SuperLookup-linux.zip")
+                "darwin": "SuperLookup-macos.dmg"}.get(sys.platform, "SuperLookup-linux.zip")
 
 
 def _version_tuple(s):
@@ -122,16 +124,41 @@ def _install_root():
     return ("exe" if sys.platform == "win32" else "bin"), exe
 
 
-def apply_update(zip_path):
-    """Extract the release zip and launch a detached helper that waits for this
-    process to exit, swaps the new build over the old, and relaunches. Raises on
-    any problem BEFORE the app quits (so a bad download leaves the current
-    version intact). Returns True once the helper is launched — caller then quits."""
+def apply_update(download_path):
+    """Launch a detached helper that waits for this process to exit, swaps the
+    new build over the old, and relaunches. Raises on any problem BEFORE the app
+    quits (so a bad download leaves the current version intact). Returns True once
+    the helper is launched — the caller then quits.
+      Windows/Linux: `download_path` is a zip (extracted here).
+      macOS:         `download_path` is a signed .dmg (mounted by the helper)."""
     kind, target = _install_root()
     staging = tempfile.mkdtemp(prefix="superlookup-update-")
-    with zipfile.ZipFile(zip_path) as zf:      # raises BadZipFile on a corrupt download
-        zf.extractall(staging)
     pid = os.getpid()
+
+    if kind == "app":
+        # macOS: a signed + notarized .dmg. Validate it's a readable image before
+        # we commit to quitting, then let the helper mount → copy → swap → relaunch.
+        if subprocess.call(["/usr/bin/hdiutil", "imageinfo", download_path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+            raise ValueError("Downloaded macOS disk image is not readable")
+        mnt = f"/tmp/superlookup-update-{pid}"
+        sh = os.path.join(staging, "_swap.sh")
+        with open(sh, "w") as fh:
+            fh.write("#!/bin/sh\n"
+                     f'while kill -0 {pid} 2>/dev/null; do sleep 0.5; done\n'
+                     f'/usr/bin/hdiutil attach -nobrowse -noverify -quiet -mountpoint "{mnt}" "{download_path}" || exit 1\n'
+                     f'APP=$(ls -d "{mnt}"/*.app 2>/dev/null | head -1)\n'
+                     f'[ -n "$APP" ] && /usr/bin/ditto "$APP" "{target}.new" && rm -rf "{target}" && mv "{target}.new" "{target}"\n'
+                     f'/usr/bin/hdiutil detach "{mnt}" -quiet 2>/dev/null\n'
+                     f'open "{target}"\nrm -- "$0"\n')
+        os.chmod(sh, 0o755)
+        subprocess.Popen(["/bin/sh", sh], start_new_session=True)
+        return True
+
+    # Windows / Linux: a zip. Extracting here doubles as a corruption check
+    # (BadZipFile raises before we launch anything or quit).
+    with zipfile.ZipFile(download_path) as zf:
+        zf.extractall(staging)
 
     if kind == "exe":
         new = os.path.join(staging, "SuperLookup.exe")
@@ -144,20 +171,6 @@ def apply_update(zip_path):
                      f'copy /y "{new}" "{target}" >nul\r\n'
                      f'start "" "{target}"\r\ndel "%~f0"\r\n')
         subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008 | 0x08000000)
-        return True
-
-    if kind == "app":
-        new = os.path.join(staging, "SuperLookup.app")
-        if not os.path.isdir(new):
-            raise FileNotFoundError("SuperLookup.app missing from the downloaded package")
-        sh = os.path.join(staging, "_swap.sh")
-        with open(sh, "w") as fh:
-            fh.write("#!/bin/sh\n"
-                     f'while kill -0 {pid} 2>/dev/null; do sleep 0.5; done\n'
-                     f'/usr/bin/ditto "{new}" "{target}.new" && rm -rf "{target}" && mv "{target}.new" "{target}"\n'
-                     f'open "{target}"\nrm -- "$0"\n')
-        os.chmod(sh, 0o755)
-        subprocess.Popen(["/bin/sh", sh], start_new_session=True)
         return True
 
     new = os.path.join(staging, "SuperLookup")   # linux binary
