@@ -33,7 +33,7 @@ import zipfile
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QObject, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt6.QtWidgets import (
@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -627,7 +627,9 @@ if HAVE_HOTKEY:
         """Ctrl+Alt+L: copy the current selection (in whatever app is focused),
         then bring SuperLookup to the front and search it."""
         _fired = pyqtSignal()        # from the pynput listener thread
-        _captured = pyqtSignal(str)  # from the capture worker thread
+
+        # macOS copies with Cmd+C; Windows/Linux with Ctrl+C.
+        _COPY_MOD = _KbKey.cmd if sys.platform == "darwin" else _KbKey.ctrl
 
         def __init__(self, window, combo):
             super().__init__()
@@ -635,7 +637,6 @@ if HAVE_HOTKEY:
             self._kbd = _KbController()
             self._listener = None
             self._fired.connect(self._on_fired)
-            self._captured.connect(self._on_captured)
             self.rebind(combo)
 
         def rebind(self, combo):
@@ -653,19 +654,27 @@ if HAVE_HOTKEY:
                 print(f"[hotkey] could not register {combo!r}: {e}")
 
         def _on_fired(self):
-            threading.Thread(target=self._capture, daemon=True).start()
+            # Runs on the GUI thread (queued from the pynput listener). Drive the
+            # copy via QTimer so key synthesis stays on the MAIN thread: pynput
+            # translates the character to a keycode through Carbon Text-Input-
+            # Source APIs, which assert main-thread on macOS and SIGTRAP if run
+            # from a worker thread. QTimer also yields time without blocking.
+            QTimer.singleShot(250, self._send_copy)
 
-        def _capture(self):
-            text = ""
+        def _send_copy(self):
             try:
-                time.sleep(0.25)  # let the hotkey keys release
-                self._kbd.press(_KbKey.ctrl); self._kbd.press("c")
-                self._kbd.release("c"); self._kbd.release(_KbKey.ctrl)
-                time.sleep(0.2)   # let the clipboard update
-                text = pyperclip.paste() or ""
+                self._kbd.press(self._COPY_MOD); self._kbd.press("c")
+                self._kbd.release("c"); self._kbd.release(self._COPY_MOD)
             except Exception:
                 pass
-            self._captured.emit(text)
+            QTimer.singleShot(200, self._read_clip)
+
+        def _read_clip(self):
+            try:
+                text = pyperclip.paste() or ""
+            except Exception:
+                text = ""
+            self._on_captured(text)
 
         def _on_captured(self, text):
             w = self.window
