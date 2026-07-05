@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.15] — 2026-07-05
 
+### Changed
+- **The default hotkey on Windows and Linux is now `Ctrl+Shift+L`** (macOS keeps
+  `⌘⌥L`). This leaves `Ctrl+Alt+L` free for Supervertaler and the Workbench's
+  built-in SuperLookup. Anyone still on the old `Ctrl+Alt+L` default is migrated
+  across once; if you deliberately set `Ctrl+Alt+L` it's left untouched.
+
 ### Fixed
 - **Windows: the hotkey now brings SuperLookup to the front even when it's
   behind another app.** Windows blocks a background process from stealing focus,

@@ -12,7 +12,8 @@ Extracted and simplified from the SuperLookup feature in the Supervertaler
 Workbench (the resource list, per-site language codes, and clipboard-capture
 approach are the same).
 
-Global hotkey:  Ctrl+Alt+L  — copies the current selection and searches it.
+Global hotkey:  Ctrl+Shift+L (Windows/Linux), ⌘⌥L (macOS)  — copies the
+current selection and searches it.
 
 Run:
     python superlookup.py
@@ -68,8 +69,16 @@ VERSION = "0.1.15"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
-HOTKEY = "<ctrl>+<alt>+l"          # pynput fallback
-DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config
+# Default global hotkey. On Windows/Linux it's Ctrl+Shift+L, leaving Ctrl+Alt+L
+# free for Supervertaler / the Workbench's built-in SuperLookup. macOS keeps
+# Ctrl+Alt+L, which Qt maps to ⌘⌥L — an inert combo no mac app reacts to, and
+# the same shortcut Supervertaler uses there.
+if sys.platform == "darwin":
+    HOTKEY = "<ctrl>+<alt>+l"          # pynput fallback (macOS uses native monitors)
+    DEFAULT_HOTKEY_QT = "Ctrl+Alt+L"   # human/Qt form stored in config → ⌘⌥L
+else:
+    HOTKEY = "<ctrl>+<shift>+l"        # pynput fallback
+    DEFAULT_HOTKEY_QT = "Ctrl+Shift+L" # human/Qt form stored in config
 
 
 # ── Auto-update ─────────────────────────────────────────────────────────────
@@ -1439,6 +1448,16 @@ class SuperLookup(QMainWindow):
             self._config.get("resources"), self._config.get("defaults_rev"))
         self._hotkey = None
         self.hotkey_qt = self._config.get("hotkey") or DEFAULT_HOTKEY_QT
+        # One-time migration: the old cross-platform default was Ctrl+Alt+L. On
+        # Windows/Linux the default is now Ctrl+Shift+L, freeing Ctrl+Alt+L for
+        # Supervertaler / the Workbench's built-in SuperLookup. Move anyone still
+        # sitting on the old default across, exactly once — the flag is persisted
+        # so a later deliberate re-pick of Ctrl+Alt+L is never overridden.
+        self._hotkey_migrated = bool(self._config.get("hotkey_migrated"))
+        if sys.platform != "darwin" and not self._hotkey_migrated:
+            if self.hotkey_qt == "Ctrl+Alt+L":
+                self.hotkey_qt = DEFAULT_HOTKEY_QT   # Ctrl+Shift+L
+            self._hotkey_migrated = True
         try:
             self.zoom = float(self._config.get("zoom") or 1.0)
         except (TypeError, ValueError):
@@ -1771,7 +1790,7 @@ class SuperLookup(QMainWindow):
                 self._informed_tray = True
                 self.tray.showMessage(
                     "SuperLookup is still running",
-                    "Press Ctrl+Alt+L any time, or click the tray icon. "
+                    f"Press {self.hotkey_qt} any time, or click the tray icon. "
                     "Quit from the tray menu.",
                     QSystemTrayIcon.MessageIcon.Information, 4000,
                 )
@@ -1829,6 +1848,7 @@ class SuperLookup(QMainWindow):
             "from": self.from_cb.currentData(),
             "to": self.to_cb.currentData(),
             "hotkey": self.hotkey_qt,
+            "hotkey_migrated": self._hotkey_migrated,
             "zoom": self.zoom,
             "defaults_rev": DEFAULTS_REV,
         })
