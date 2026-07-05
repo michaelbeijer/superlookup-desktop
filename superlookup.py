@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.12"
+VERSION = "0.1.13"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
