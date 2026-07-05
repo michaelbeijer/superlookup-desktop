@@ -5,6 +5,17 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] — 2026-07-05
+
+### Fixed
+- **Windows: the one-click updater now actually replaces the app.** The swap
+  helper copied the new `.exe` over the old one the moment the app disappeared
+  from the task list, but Windows hadn't released the file handle yet, so the
+  copy failed silently and the old version stayed (it kept re-offering the
+  update). The helper now retries the copy until the file is free — which also
+  waits for the app to fully exit — then relaunches, and gives up gracefully
+  after ~30s rather than looping.
+
 ## [0.1.13] — 2026-07-05
 
 ### Changed
@@ -151,6 +162,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.14]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.10...v0.1.11

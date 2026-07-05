@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.13"
+VERSION = "0.1.14"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -164,12 +164,32 @@ def apply_update(download_path):
         new = os.path.join(staging, "SuperLookup.exe")
         if not os.path.exists(new):
             raise FileNotFoundError("SuperLookup.exe missing from the downloaded package")
+        # Retry the copy until it succeeds: it fails while the old exe is still
+        # locked (app running, or the handle not yet released the instant the
+        # process disappears from the task list), so retrying IS the wait. Give
+        # up after ~30s and relaunch the current version rather than loop forever.
         bat = os.path.join(staging, "_swap.bat")
         with open(bat, "w", encoding="ascii") as fh:
-            fh.write("@echo off\r\n:loop\r\n"
-                     f'tasklist /fi "pid eq {pid}" | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto loop)\r\n'
-                     f'copy /y "{new}" "{target}" >nul\r\n'
-                     f'start "" "{target}"\r\ndel "%~f0"\r\n')
+            fh.write(
+                "@echo off\r\n"
+                "set /a tries=0\r\n"
+                ":retry\r\n"
+                f'copy /y "{new}" "{target}" >nul 2>&1\r\n'
+                "if not errorlevel 1 goto done\r\n"
+                "set /a tries+=1\r\n"
+                "if %tries% geq 30 goto giveup\r\n"
+                "timeout /t 1 /nobreak >nul\r\n"
+                "goto retry\r\n"
+                ":done\r\n"
+                f'start "" "{target}"\r\n'
+                'del "%~f0"\r\n'
+                "exit /b 0\r\n"
+                ":giveup\r\n"
+                'echo Could not replace SuperLookup.exe (it stayed locked). Your current '
+                'version still works; download the update from GitHub if needed. '
+                '> "%TEMP%\\superlookup-update-failed.txt"\r\n'
+                f'start "" "{target}"\r\n'
+                'del "%~f0"\r\n')
         subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008 | 0x08000000)
         return True
 
