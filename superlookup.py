@@ -65,7 +65,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.18"
+VERSION = "0.1.19"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -775,7 +775,7 @@ def _slk_log(msg):
         return
     try:
         with open(_SLK_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
+            f.write(f"{time.monotonic():10.3f}  {msg}\n")
     except Exception:
         pass
 
@@ -1051,13 +1051,14 @@ if HAVE_HOTKEY:
             return event
 
         def _on_fired(self):
-            # Always reached on the GUI (main) thread — from the macOS NSEvent
-            # monitor directly, or queued from the pynput listener via _fired.
-            # Chain the copy via QTimer so any key synthesis stays on the main
-            # thread and the hotkey keys get a moment to release first.
+            # Reached on the GUI (main) thread — queued from the tap thread via
+            # _fired. Chain the copy via QTimer so key synthesis stays on the
+            # main thread and the hotkey keys get a moment to release first.
+            _slk_log("[fire] on_fired (queued onto GUI thread)")
             QTimer.singleShot(250, self._send_copy)
 
         def _send_copy(self):
+            _slk_log("[fire] send_copy")
             if IS_MAC and HAVE_MAC_HOTKEY:
                 self._mac_send_copy()
             else:
@@ -1088,17 +1089,18 @@ if HAVE_HOTKEY:
                     text = pyperclip.paste() or ""
                 except Exception:
                     text = ""
-            if os.environ.get("SLK_DEBUG"):
-                print(f"[slk] _read_clip got {text!r}", flush=True)
+            _slk_log(f"[fire] read_clip got {text[:40]!r}")
             self._on_captured(text)
 
         def _on_captured(self, text):
             w = self.window
-            w.show_window()
             lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+            _slk_log(f"[fire] on_captured lines={len(lines)} → show_window")
+            w.show_window()
             if lines:
                 w.query.setText(lines[0])
                 w.search()
+                _slk_log("[fire] searched")
             else:
                 w.query.setFocus()
 
@@ -1855,6 +1857,8 @@ class SuperLookup(QMainWindow):
             self.tray.setToolTip(f"SuperLookup — press {hk}" if HAVE_HOTKEY else "SuperLookup")
 
     def show_window(self):
+        _slk_log(f"[fire] show_window visible={self.isVisible()} "
+                 f"active={self.isActiveWindow()}")
         # Restore the exact geometry we had when hidden (saveGeometry captures
         # the maximized/fullscreen state too), instead of forcing "normal".
         if self._saved_geometry is not None:
@@ -1886,16 +1890,28 @@ class SuperLookup(QMainWindow):
                 self.activateWindow()
 
     def _mac_force_front(self):
-        """Bring the window to the front on macOS, overriding focus-stealing
-        prevention. Called twice from show_window (now + next tick) so it works
-        from a cold start, not just after the window's been shown once."""
+        """Bring the window to the front on macOS. macOS 26 largely ignores
+        activateIgnoringOtherApps for a background app, so we also order the
+        native NSWindow front directly — orderFrontRegardless bypasses the
+        'app is not active' restriction that otherwise leaves the window behind
+        the app you copied from."""
         try:
             from AppKit import NSApplication
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             pass
+        try:
+            import objc
+            from ctypes import c_void_p
+            nswin = objc.objc_object(c_void_p=int(self.winId())).window()
+            if nswin is not None:
+                nswin.makeKeyAndOrderFront_(None)
+                nswin.orderFrontRegardless()
+        except Exception as e:
+            _slk_log(f"[front] nswindow error {e}")
         self.raise_()
         self.activateWindow()
+        _slk_log(f"[front] after: active={self.isActiveWindow()}")
 
     def _mac_check_accessibility(self, attempt=0):
         """Warn (and trigger the macOS prompt) only if Accessibility is *still*

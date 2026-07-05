@@ -5,6 +5,19 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] — 2026-07-05
+
+### Fixed
+- **macOS: the window now actually comes to the front on the hotkey.** With the
+  tap fixed in 0.1.18, the search ran reliably but the window often stayed
+  behind the app you copied from — macOS 26 largely ignores
+  `activateIgnoringOtherApps` for a background app. SuperLookup now also orders
+  its native `NSWindow` front directly (`makeKeyAndOrderFront` +
+  `orderFrontRegardless`), which bypasses the "app is not active" restriction,
+  so it pops forward with your results instead of searching invisibly.
+
+_macOS-only release; Windows/Linux behaviour is unchanged._
+
 ## [0.1.18] — 2026-07-05
 
 ### Fixed
@@ -232,6 +245,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.19]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.15...v0.1.16
