@@ -22,7 +22,10 @@ Grab a self-contained build for your OS from the
 What's new in each version: [CHANGELOG.md](CHANGELOG.md).
 
 - **Windows** — `SuperLookup.exe`, just double-click.
-- **macOS** — `SuperLookup.app` (unsigned: right-click → Open the first time).
+- **macOS** — download `SuperLookup-macos.dmg`, open it, drag SuperLookup to
+  Applications. It's signed with a Developer ID and notarized by Apple, so it
+  opens normally (no right-click needed). On first use of the global hotkey,
+  grant it **Accessibility** and **Input Monitoring** when prompted.
 - **Linux** — `SuperLookup` binary; `chmod +x` and run.
 
 Nothing to install — each build bundles Python + Qt + Chromium, so it's large
@@ -60,10 +63,14 @@ macOS / Linux runners — automatically, and attached to a Release when you push
 - **Correct per-site language codes** (ProZ `dut/eng`, Juremy `nld/eng`,
   Linguee's English-first ordering, BabelNet uppercase, etc.), same as the
   Workbench.
-- **Global hotkey — Ctrl+Alt+L:** select a term in any app, press it, and
-  SuperLookup jumps to the front already searching it (clipboard capture via
-  `pynput` + `pyperclip`). Runs in the system tray, so the hotkey stays live
-  when the window is closed.
+- **Global hotkey — `Ctrl+Alt+L`** (macOS: **⌘⌥L**, Command+Option+L): select a
+  term in any app, press it, and SuperLookup jumps to the front already
+  searching it. Runs in the system tray, so the hotkey stays live when the
+  window is closed. The binding is one cross-platform string — Qt maps it to the
+  native modifiers on each OS (Ctrl→⌘ on macOS), and it's the **same shortcut
+  Supervertaler Workbench uses**, so you learn it once for both apps on both
+  platforms. Change it in Settings if you like; on macOS the hotkey needs
+  **Accessibility** and **Input Monitoring** permission (the app will prompt).
 - **Persistent logins:** cookies/sessions are kept on disk (`webdata/`), so
   sites you log into stay logged in across launches.
 - **Ad/tracker blocking:** a request interceptor drops known ad domains. It
