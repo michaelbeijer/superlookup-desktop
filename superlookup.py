@@ -657,6 +657,63 @@ if HAVE_WEBENGINE:
 # for the Cmd+C copy — no pynput, no off-main-thread TIS calls. Win/Linux keep
 # pynput unchanged.
 IS_MAC = sys.platform == "darwin"
+
+
+def _win_force_foreground(win):
+    """Pull `win` in front of whatever app is currently focused, on Windows.
+
+    Windows refuses SetForegroundWindow from a process that doesn't own the
+    foreground, so a background/behind window (e.g. behind Trados) can't raise
+    itself with Qt's raise()/activateWindow() alone. We combine the two
+    documented workarounds — temporarily zeroing the foreground-lock timeout and
+    attaching to the foreground thread's input queue — then call
+    SetForegroundWindow. Returns True if it reports success.
+
+    All handles are declared as pointers: HWNDs are 64-bit on Win64 and ctypes'
+    default 32-bit int return/arg types silently truncate them (the bug that made
+    an earlier version of this do nothing)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        k = ctypes.windll.kernel32
+        u.GetForegroundWindow.restype = wintypes.HWND
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        u.GetWindowThreadProcessId.restype = wintypes.DWORD
+        u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+        u.SetForegroundWindow.argtypes = [wintypes.HWND]
+        u.SetForegroundWindow.restype = wintypes.BOOL
+        u.BringWindowToTop.argtypes = [wintypes.HWND]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.IsIconic.argtypes = [wintypes.HWND]
+        u.SystemParametersInfoW.argtypes = [
+            wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+
+        hwnd = wintypes.HWND(int(win.winId()))
+        SW_RESTORE, SPI_GET, SPI_SET = 9, 0x2000, 0x2001
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, SW_RESTORE)
+
+        # Drop the foreground-lock timeout to 0 so the OS honours the call, then
+        # put it back so we don't change the user's setting for good.
+        saved = wintypes.DWORD(0)
+        u.SystemParametersInfoW(SPI_GET, 0, ctypes.byref(saved), 0)
+        u.SystemParametersInfoW(SPI_SET, 0, ctypes.c_void_p(0), 0)
+
+        fg_tid = u.GetWindowThreadProcessId(u.GetForegroundWindow(), None)
+        our_tid = k.GetCurrentThreadId()
+        attached = bool(u.AttachThreadInput(fg_tid, our_tid, True)) if fg_tid else False
+        u.BringWindowToTop(hwnd)
+        ok = bool(u.SetForegroundWindow(hwnd))
+        if attached:
+            u.AttachThreadInput(fg_tid, our_tid, False)
+
+        u.SystemParametersInfoW(SPI_SET, 0, ctypes.c_void_p(saved.value), 0)
+        return ok
+    except Exception:
+        return False
+
+
 HAVE_MAC_HOTKEY = False
 if IS_MAC:
     try:
@@ -1759,22 +1816,15 @@ class SuperLookup(QMainWindow):
             except Exception:
                 pass
         elif sys.platform == "win32":
-            # Windows blocks SetForegroundWindow for a background process. Briefly
-            # attach to the current foreground window's input thread so the call is
-            # allowed, then detach. Restores the window if it was minimized too.
-            try:
-                import ctypes
-                user32 = ctypes.windll.user32
-                hwnd = int(self.winId())
-                fg_tid = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
-                our_tid = ctypes.windll.kernel32.GetCurrentThreadId()
-                user32.AttachThreadInput(fg_tid, our_tid, True)
-                user32.ShowWindow(hwnd, 9)        # SW_RESTORE
-                user32.BringWindowToTop(hwnd)
-                user32.SetForegroundWindow(hwnd)
-                user32.AttachThreadInput(fg_tid, our_tid, False)
-            except Exception:
-                pass
+            if not _win_force_foreground(self):
+                # Last resort: a minimize→restore cycle always pulls a window to
+                # the front. Restoring to the saved state keeps maximized/normal.
+                st = self.windowState()
+                self.setWindowState(st | Qt.WindowState.WindowMinimized)
+                self.setWindowState(
+                    (st & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
+                self.raise_()
+                self.activateWindow()
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
