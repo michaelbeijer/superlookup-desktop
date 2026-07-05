@@ -645,14 +645,21 @@ if IS_MAC:
 # above and fall back to the crash-prone pynput listener.
 HAVE_AX_TRUST = False
 if IS_MAC:
-    try:
-        from ApplicationServices import (
-            AXIsProcessTrusted, AXIsProcessTrustedWithOptions,
-            kAXTrustedCheckOptionPrompt,
-        )
-        HAVE_AX_TRUST = True
-    except Exception:
-        HAVE_AX_TRUST = False
+    # The AX trust symbols live in the HIServices framework, surfaced by pyobjc
+    # under both the ApplicationServices umbrella and HIServices itself. The
+    # frozen .app bundles HIServices (not the umbrella), so try that first.
+    for _ax_mod in ("HIServices", "ApplicationServices"):
+        try:
+            _m = __import__(_ax_mod, fromlist=[
+                "AXIsProcessTrusted", "AXIsProcessTrustedWithOptions",
+                "kAXTrustedCheckOptionPrompt"])
+            AXIsProcessTrusted = _m.AXIsProcessTrusted
+            AXIsProcessTrustedWithOptions = _m.AXIsProcessTrustedWithOptions
+            kAXTrustedCheckOptionPrompt = _m.kAXTrustedCheckOptionPrompt
+            HAVE_AX_TRUST = True
+            break
+        except Exception:
+            continue
 
 
 def mac_clipboard_text():
