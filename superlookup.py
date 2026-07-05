@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -631,7 +631,7 @@ IS_MAC = sys.platform == "darwin"
 HAVE_MAC_HOTKEY = False
 if IS_MAC:
     try:
-        from AppKit import NSEvent
+        from AppKit import NSEvent, NSPasteboard
         from Quartz import (
             CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags,
             kCGHIDEventTap,
@@ -639,6 +639,46 @@ if IS_MAC:
         HAVE_MAC_HOTKEY = True
     except Exception:
         HAVE_MAC_HOTKEY = False
+
+# Accessibility-trust check is a separate, optional import: if it's unavailable
+# (e.g. not bundled) we must NOT disable the working NSEvent/Quartz hotkey path
+# above and fall back to the crash-prone pynput listener.
+HAVE_AX_TRUST = False
+if IS_MAC:
+    try:
+        from ApplicationServices import (
+            AXIsProcessTrusted, AXIsProcessTrustedWithOptions,
+            kAXTrustedCheckOptionPrompt,
+        )
+        HAVE_AX_TRUST = True
+    except Exception:
+        HAVE_AX_TRUST = False
+
+
+def mac_clipboard_text():
+    """Read plain text from the pasteboard via NSPasteboard. Used instead of
+    pyperclip on macOS: the app already links AppKit, and this avoids relying on
+    a pbpaste subprocess resolving correctly inside the frozen .app bundle."""
+    try:
+        return NSPasteboard.generalPasteboard().stringForType_(
+            "public.utf8-plain-text") or ""
+    except Exception:
+        return ""
+
+
+def mac_accessibility_trusted(prompt=False):
+    """True if this process is trusted for Accessibility (required to observe the
+    global hotkey and to synthesize the Cmd+C that captures the selection). With
+    prompt=True, macOS shows its "grant Accessibility" dialog when untrusted."""
+    if not HAVE_AX_TRUST:
+        return True
+    try:
+        if prompt:
+            return bool(AXIsProcessTrustedWithOptions(
+                {kAXTrustedCheckOptionPrompt: True}))
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return True  # can't determine — don't block the feature
 
 # Cocoa modifier-flag bits (device independent), key-down mask, Cmd flag, 'C' key.
 _NS_KEYDOWN_MASK = 1 << 10
@@ -746,6 +786,8 @@ if HAVE_HOTKEY:
                     return
                 ch = event.charactersIgnoringModifiers()
                 if ch and self._mac_key and ch.lower() == self._mac_key:
+                    if os.environ.get("SLK_DEBUG"):
+                        print(f"[slk] hotkey matched ch={ch!r}", flush=True)
                     self._on_fired()
             except Exception:
                 pass
@@ -788,10 +830,15 @@ if HAVE_HOTKEY:
                 pass
 
         def _read_clip(self):
-            try:
-                text = pyperclip.paste() or ""
-            except Exception:
-                text = ""
+            if IS_MAC and HAVE_MAC_HOTKEY:
+                text = mac_clipboard_text()
+            else:
+                try:
+                    text = pyperclip.paste() or ""
+                except Exception:
+                    text = ""
+            if os.environ.get("SLK_DEBUG"):
+                print(f"[slk] _read_clip got {text!r}", flush=True)
             self._on_captured(text)
 
         def _on_captured(self, text):
@@ -1796,6 +1843,22 @@ def main():
         app.setQuitOnLastWindowClosed(False)
     if HAVE_HOTKEY:
         win._hotkey = Hotkey(win, qt_to_pynput(win.hotkey_qt) or HOTKEY)  # keep a ref alive
+        # On macOS the global hotkey needs Accessibility permission — both to see
+        # the keystroke and to synthesize the Cmd+C that grabs your selection.
+        # Without it the hotkey silently does nothing, so check on launch, trigger
+        # the system prompt, and explain what to do (and how to fix a stale grant
+        # left behind by an app update).
+        if IS_MAC and HAVE_MAC_HOTKEY and not mac_accessibility_trusted(prompt=True):
+            QTimer.singleShot(400, lambda: QMessageBox.warning(
+                win, "Enable the global hotkey",
+                "SuperLookup needs Accessibility permission for its global "
+                f"hotkey ({win.hotkey_qt}) to grab your selection from other "
+                "apps.\n\n"
+                "Open System Settings › Privacy & Security › "
+                "Accessibility and switch SuperLookup on.\n\n"
+                "If SuperLookup is already listed (e.g. after an update) but the "
+                "hotkey still does nothing, remove it with the – button and "
+                "add it again — the old entry can go stale."))
 
     sys.exit(app.exec())
 

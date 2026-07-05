@@ -5,6 +5,24 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] — 2026-07-05
+
+### Fixed
+- **macOS: the global hotkey did nothing because the app never asked for
+  Accessibility permission.** Detecting the hotkey and synthesizing the Cmd+C
+  that grabs your selection both require it; without an effective grant the
+  keystroke is silently dropped and the search box stays empty. SuperLookup now
+  checks Accessibility on launch, triggers the system prompt, and explains how
+  to enable it — including how to fix a *stale* grant (remove and re-add the
+  app), which is easy to end up with after updating.
+- macOS: the clipboard is now read via `NSPasteboard` directly instead of
+  pyperclip, avoiding a `pbpaste` lookup that can misbehave inside the packaged
+  `.app`.
+
+### Internal
+- The Accessibility-trust check is imported separately, so if it is ever
+  unavailable it can't disable the working NSEvent/Quartz hotkey path.
+
 ## [0.1.9] — 2026-07-05
 
 ### Fixed
@@ -100,6 +118,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.10]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.4...v0.1.7

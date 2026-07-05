@@ -113,6 +113,7 @@ pkill -x "$APP_NAME" 2>/dev/null || true
 rm -rf "$DIST/$APP_NAME" "$APP_PATH" "build/$APP_NAME"
 pyinstaller --noconfirm --clean --windowed --name "$APP_NAME" \
     --exclude-module PyQt5 --exclude-module PySide6 --exclude-module PySide2 \
+    --hidden-import ApplicationServices \
     "$ENTRY"
 
 if [ ! -d "$APP_PATH" ]; then
