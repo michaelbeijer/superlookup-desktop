@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.11"
+VERSION = "0.1.12"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -640,6 +640,27 @@ if IS_MAC:
     except Exception:
         HAVE_MAC_HOTKEY = False
 
+# A CGEventTap can CONSUME the hotkey so it never reaches the foreground app
+# (a plain NSEvent global monitor only watches, so the combo also triggers e.g.
+# Chrome's ⌘⌥L = downloads). Optional import: if unavailable we fall back to the
+# watch-only monitor rather than breaking the hotkey entirely.
+HAVE_MAC_TAP = False
+if IS_MAC and HAVE_MAC_HOTKEY:
+    try:
+        from Quartz import (
+            CGEventTapCreate, CGEventTapEnable, CGEventMaskBit,
+            kCGEventKeyDown, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
+            kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput,
+            CFMachPortCreateRunLoopSource, CFRunLoopAddSource,
+            CFRunLoopGetMain, kCFRunLoopCommonModes,
+        )
+        # kCGSessionEventTapLocation isn't exposed by name in this pyobjc build;
+        # its enum value is 1 (0=HID, 1=Session, 2=AnnotatedSession).
+        _KCG_SESSION_TAP = 1
+        HAVE_MAC_TAP = True
+    except Exception:
+        HAVE_MAC_TAP = False
+
 # Accessibility-trust check is a separate, optional import: if it's unavailable
 # (e.g. not bundled) we must NOT disable the working NSEvent/Quartz hotkey path
 # above and fall back to the crash-prone pynput listener.
@@ -756,6 +777,8 @@ if HAVE_HOTKEY:
             self.window = window
             self._listener = None
             self._mac_monitors = []
+            self._mac_tap = None
+            self._mac_tap_src = None
             self._mac_mods, self._mac_key, self._mac_fcode = 0, None, None
             # pynput's Controller is only used off the macOS path.
             self._kbd = None if (IS_MAC and HAVE_MAC_HOTKEY) else _KbController()
@@ -779,67 +802,110 @@ if HAVE_HOTKEY:
             except Exception as e:
                 print(f"[hotkey] could not register {combo!r}: {e}")
 
-        # ── macOS native hotkey: main-thread NSEvent monitors ────────────────
+        # ── macOS native hotkey ──────────────────────────────────────────────
         def _mac_rebind(self, combo):
+            self._mac_stop()
+            self._mac_mods, self._mac_key, self._mac_fcode = \
+                _mac_combo_to_mask_key(combo)
+            if not self._mac_key and self._mac_fcode is None:
+                print(f"[hotkey] unsupported macOS combo: {combo!r}")
+                return
+            # Prefer a CGEventTap so the hotkey is CONSUMED and never reaches the
+            # foreground app; fall back to a watch-only NSEvent monitor.
+            if HAVE_MAC_TAP and self._mac_start_tap():
+                return
+            self._mac_start_monitors()
+
+        def _mac_stop(self):
             for m in self._mac_monitors:
                 try:
                     NSEvent.removeMonitor_(m)
                 except Exception:
                     pass
             self._mac_monitors = []
-            self._mac_mods, self._mac_key, self._mac_fcode = \
-                _mac_combo_to_mask_key(combo)
-            if not self._mac_key and self._mac_fcode is None:
-                print(f"[hotkey] unsupported macOS combo: {combo!r}")
-                return
+            if self._mac_tap is not None:
+                try:
+                    CGEventTapEnable(self._mac_tap, False)
+                except Exception:
+                    pass
+            self._mac_tap = None
+            self._mac_tap_src = None
+
+        def _mac_start_tap(self):
+            try:
+                mask = CGEventMaskBit(kCGEventKeyDown)
+                tap = CGEventTapCreate(
+                    _KCG_SESSION_TAP, kCGHeadInsertEventTap,
+                    kCGEventTapOptionDefault, mask, self._tap_callback, None)
+                if not tap:
+                    _slk_log("[tap] CGEventTapCreate returned NULL "
+                             f"(trusted={mac_accessibility_trusted(prompt=False)})")
+                    return False
+                src = CFMachPortCreateRunLoopSource(None, tap, 0)
+                CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes)
+                CGEventTapEnable(tap, True)
+                self._mac_tap, self._mac_tap_src = tap, src
+                _slk_log(f"[tap] installed mods={hex(self._mac_mods)} "
+                         f"key={self._mac_key!r} fcode={self._mac_fcode} "
+                         f"trusted={mac_accessibility_trusted(prompt=False)}")
+                return True
+            except Exception as e:
+                _slk_log(f"[tap] EXCEPTION {e}")
+                self._mac_tap = None
+                return False
+
+        def _tap_callback(self, proxy, etype, event, refcon):
+            # Runs on the main run loop. Return None to swallow the event, or the
+            # event to let it through. Keep this fast (taps have a timeout).
+            try:
+                if etype in (kCGEventTapDisabledByTimeout,
+                             kCGEventTapDisabledByUserInput):
+                    if self._mac_tap is not None:
+                        CGEventTapEnable(self._mac_tap, True)
+                    return event
+                ns = NSEvent.eventWithCGEvent_(event)
+                if ns is not None and self._mac_event_matches(ns):
+                    _slk_log("[tap] matched — consuming + firing")
+                    self._on_fired()
+                    return None  # consume: the app never sees the hotkey
+            except Exception as e:
+                _slk_log(f"[tap] cb error {e}")
+            return event
+
+        # Fallback: watch-only NSEvent monitors (do NOT consume the keystroke).
+        def _mac_start_monitors(self):
             try:
                 g = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
                     _NS_KEYDOWN_MASK, self._mac_on_global)
                 l = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
                     _NS_KEYDOWN_MASK, self._mac_on_local)
                 self._mac_monitors = [m for m in (g, l) if m is not None]
-                _slk_log(f"[rebind] combo={combo!r} mods={hex(self._mac_mods)} "
-                         f"key={self._mac_key!r} fcode={self._mac_fcode} "
-                         f"global={'ok' if g else 'None'} local={'ok' if l else 'None'} "
-                         f"trusted={mac_accessibility_trusted(prompt=False)}")
+                _slk_log(f"[monitor] mods={hex(self._mac_mods)} "
+                         f"key={self._mac_key!r} global={'ok' if g else 'None'}")
             except Exception as e:
                 print(f"[hotkey] could not register macOS monitor: {e}")
-                _slk_log(f"[rebind] EXCEPTION {e}")
 
-        def _mac_match(self, event):
-            # Called on the main thread by the NSEvent monitors.
+        def _mac_event_matches(self, event):
             try:
-                mods = int(event.modifierFlags()) & _NS_MOD_MASK
-                # Diagnostic: log any keydown carrying Command or Control, so we
-                # can see whether the global monitor receives real keypresses at
-                # all (without logging ordinary typing).
-                if mods & (_NS_COMMAND | _NS_CONTROL):
-                    try:
-                        _slk_log(f"[keydown] mods={hex(mods)} "
-                                 f"ch={str(event.charactersIgnoringModifiers())!r} "
-                                 f"want mods={hex(self._mac_mods)} key={self._mac_key!r}")
-                    except Exception:
-                        pass
                 if event.isARepeat():
-                    return
-                if mods != self._mac_mods:
-                    return
+                    return False
+                if (int(event.modifierFlags()) & _NS_MOD_MASK) != self._mac_mods:
+                    return False
                 if self._mac_fcode is not None:
-                    if int(event.keyCode()) == self._mac_fcode:
-                        self._on_fired()
-                    return
+                    return int(event.keyCode()) == self._mac_fcode
                 ch = event.charactersIgnoringModifiers()
-                if ch and self._mac_key and ch.lower() == self._mac_key:
-                    _slk_log(f"[MATCH] fired on ch={ch!r}")
-                    self._on_fired()
+                return bool(ch and self._mac_key
+                            and str(ch).lower() == self._mac_key)
             except Exception:
-                pass
+                return False
 
         def _mac_on_global(self, event):   # another app focused; return ignored
-            self._mac_match(event)
+            if self._mac_event_matches(event):
+                self._on_fired()
 
         def _mac_on_local(self, event):    # our app focused; must return event
-            self._mac_match(event)
+            if self._mac_event_matches(event):
+                self._on_fired()
             return event
 
         def _on_fired(self):

@@ -5,6 +5,17 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] — 2026-07-05
+
+### Fixed
+- **macOS: the global hotkey no longer leaks into the app you copy from.** The
+  previous watch-only NSEvent monitor didn't consume the keystroke, so the combo
+  also triggered whatever the foreground app binds it to (e.g. Chrome opened its
+  Downloads page on ⌘⌥L). SuperLookup now uses a `CGEventTap` that intercepts and
+  **consumes** the hotkey, so it never reaches other apps — it works everywhere
+  (Chrome included) and can't disturb your selection. Falls back to the old
+  watch-only monitor if a tap can't be created.
+
 ## [0.1.11] — 2026-07-05
 
 ### Fixed
@@ -133,6 +144,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.12]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.8...v0.1.9
