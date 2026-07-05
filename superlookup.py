@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.10"
+VERSION = "0.1.11"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -662,6 +662,20 @@ if IS_MAC:
             continue
 
 
+_SLK_LOG_PATH = os.path.expanduser("~/slk_diag.log")
+
+
+def _slk_log(msg):
+    """Append a diagnostic line to ~/slk_diag.log. Off unless SLK_DEBUG is set."""
+    if not os.environ.get("SLK_DEBUG"):
+        return
+    try:
+        with open(_SLK_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+
 def mac_clipboard_text():
     """Read plain text from the pasteboard via NSPasteboard. Used instead of
     pyperclip on macOS: the app already links AppKit, and this avoids relying on
@@ -709,10 +723,17 @@ def _mac_combo_to_mask_key(combo):
     mask, key, fcode = 0, None, None
     for tok in (combo or "").split("+"):
         t = tok.strip().lower()
-        if   t == "<ctrl>":  mask |= _NS_CONTROL
+        # Follow Qt's macOS convention (matches Supervertaler): Qt "Ctrl" maps
+        # to Command and Qt "Meta" to Control. So a cross-platform "Ctrl+Alt+L"
+        # binding fires on ⌘⌥L here — an INERT combo that no app treats as a
+        # text command. This matters because the NSEvent global monitor does
+        # not consume the keystroke: it also reaches the focused app, so the
+        # combo must be one that app will ignore (⌃⌥L, by contrast, gets eaten
+        # by text views and mangles the selection).
+        if   t == "<ctrl>":  mask |= _NS_COMMAND   # Qt Ctrl → mac ⌘
+        elif t == "<cmd>":   mask |= _NS_CONTROL   # Qt Meta → mac ⌃
         elif t == "<alt>":   mask |= _NS_OPTION
         elif t == "<shift>": mask |= _NS_SHIFT
-        elif t == "<cmd>":   mask |= _NS_COMMAND
         elif t.startswith("<") and t.endswith(">") and t[1:-1] in _MAC_FKEY_CODES:
             fcode = _MAC_FKEY_CODES[t[1:-1]]
         elif len(t) == 1:    key = t
@@ -777,15 +798,31 @@ if HAVE_HOTKEY:
                 l = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
                     _NS_KEYDOWN_MASK, self._mac_on_local)
                 self._mac_monitors = [m for m in (g, l) if m is not None]
+                _slk_log(f"[rebind] combo={combo!r} mods={hex(self._mac_mods)} "
+                         f"key={self._mac_key!r} fcode={self._mac_fcode} "
+                         f"global={'ok' if g else 'None'} local={'ok' if l else 'None'} "
+                         f"trusted={mac_accessibility_trusted(prompt=False)}")
             except Exception as e:
                 print(f"[hotkey] could not register macOS monitor: {e}")
+                _slk_log(f"[rebind] EXCEPTION {e}")
 
         def _mac_match(self, event):
             # Called on the main thread by the NSEvent monitors.
             try:
+                mods = int(event.modifierFlags()) & _NS_MOD_MASK
+                # Diagnostic: log any keydown carrying Command or Control, so we
+                # can see whether the global monitor receives real keypresses at
+                # all (without logging ordinary typing).
+                if mods & (_NS_COMMAND | _NS_CONTROL):
+                    try:
+                        _slk_log(f"[keydown] mods={hex(mods)} "
+                                 f"ch={str(event.charactersIgnoringModifiers())!r} "
+                                 f"want mods={hex(self._mac_mods)} key={self._mac_key!r}")
+                    except Exception:
+                        pass
                 if event.isARepeat():
                     return
-                if (int(event.modifierFlags()) & _NS_MOD_MASK) != self._mac_mods:
+                if mods != self._mac_mods:
                     return
                 if self._mac_fcode is not None:
                     if int(event.keyCode()) == self._mac_fcode:
@@ -793,8 +830,7 @@ if HAVE_HOTKEY:
                     return
                 ch = event.charactersIgnoringModifiers()
                 if ch and self._mac_key and ch.lower() == self._mac_key:
-                    if os.environ.get("SLK_DEBUG"):
-                        print(f"[slk] hotkey matched ch={ch!r}", flush=True)
+                    _slk_log(f"[MATCH] fired on ch={ch!r}")
                     self._on_fired()
             except Exception:
                 pass
@@ -1604,6 +1640,15 @@ class SuperLookup(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        # On macOS a background/tray app can't steal focus from the frontmost
+        # app with Qt's raise()/activateWindow() alone — the window searches
+        # but never comes forward. Force it via AppKit.
+        if IS_MAC and HAVE_MAC_HOTKEY:
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

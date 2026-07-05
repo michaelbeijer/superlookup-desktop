@@ -5,6 +5,21 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] — 2026-07-05
+
+### Fixed
+- **macOS: the hotkey no longer disturbs the app you copy from, and now brings
+  SuperLookup to the front.** The global key monitor doesn't consume the
+  keystroke, so the shortcut also reached the foreground app; with a Control-
+  based combo that meant text views mangled the selection. The macOS modifier
+  mapping now follows Qt's convention (Qt "Ctrl" → ⌘, "Meta" → ⌃), so the
+  default shortcut is **⌘⌥L (Command+Option+L)** — an inert combo no app reacts
+  to, matching Supervertaler. This also aligns the global hotkey with what Qt's
+  in-app shortcut uses.
+- macOS: after capturing the selection, the window is forced to the front via
+  `NSApplication.activateIgnoringOtherApps` (Qt's `raise()`/`activateWindow()`
+  can't pull a tray app in front of the active app on macOS).
+
 ## [0.1.10] — 2026-07-05
 
 ### Fixed
@@ -118,6 +133,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.11]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.7...v0.1.8
