@@ -5,6 +5,16 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] — 2026-07-05
+
+### Fixed
+- **Windows: the hotkey now brings SuperLookup to the front even when it's
+  behind another app.** Windows blocks a background process from stealing focus,
+  so `raise()`/`activateWindow()` left the window behind (e.g. behind Trados) —
+  it only worked from the tray or when already visible. It now briefly attaches
+  to the foreground window's input thread so `SetForegroundWindow` is permitted,
+  then detaches (and restores the window if it was minimized).
+
 ## [0.1.14] — 2026-07-05
 
 ### Fixed
@@ -162,6 +172,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.15]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.11...v0.1.12

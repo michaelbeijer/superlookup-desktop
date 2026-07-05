@@ -64,7 +64,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.14"
+VERSION = "0.1.15"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -1730,13 +1730,30 @@ class SuperLookup(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
-        # On macOS a background/tray app can't steal focus from the frontmost
-        # app with Qt's raise()/activateWindow() alone — the window searches
-        # but never comes forward. Force it via AppKit.
+        # A background/tray app can't pull itself in front of the active app with
+        # Qt's raise()/activateWindow() alone — the window searches but stays
+        # behind (e.g. behind Trados). Force it forward per-OS.
         if IS_MAC and HAVE_MAC_HOTKEY:
             try:
                 from AppKit import NSApplication
                 NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        elif sys.platform == "win32":
+            # Windows blocks SetForegroundWindow for a background process. Briefly
+            # attach to the current foreground window's input thread so the call is
+            # allowed, then detach. Restores the window if it was minimized too.
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                hwnd = int(self.winId())
+                fg_tid = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+                our_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+                user32.AttachThreadInput(fg_tid, our_tid, True)
+                user32.ShowWindow(hwnd, 9)        # SW_RESTORE
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.AttachThreadInput(fg_tid, our_tid, False)
             except Exception:
                 pass
 
