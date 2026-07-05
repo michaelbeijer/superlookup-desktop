@@ -65,7 +65,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.16"
+VERSION = "0.1.17"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -728,8 +728,9 @@ HAVE_MAC_TAP = False
 if IS_MAC and HAVE_MAC_HOTKEY:
     try:
         from Quartz import (
-            CGEventTapCreate, CGEventTapEnable, CGEventMaskBit,
-            kCGEventKeyDown, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
+            CGEventTapCreate, CGEventTapEnable, CGEventTapIsEnabled,
+            CGEventGetFlags, CGEventMaskBit, kCGEventKeyDown,
+            kCGHeadInsertEventTap, kCGEventTapOptionDefault,
             kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput,
             CFMachPortCreateRunLoopSource, CFRunLoopAddSource,
             CFRunLoopGetMain, kCFRunLoopCommonModes,
@@ -903,13 +904,19 @@ if HAVE_HOTKEY:
                 except Exception:
                     pass
             self._mac_monitors = []
+            t = getattr(self, "_mac_tap_timer", None)
+            if t is not None:
+                try:
+                    t.stop()
+                except Exception:
+                    pass
+            self._mac_tap_timer = None
             if self._mac_tap is not None:
                 try:
                     CGEventTapEnable(self._mac_tap, False)
                 except Exception:
                     pass
             self._mac_tap = None
-            self._mac_tap_src = None
 
         def _mac_start_tap(self):
             try:
@@ -924,7 +931,16 @@ if HAVE_HOTKEY:
                 src = CFMachPortCreateRunLoopSource(None, tap, 0)
                 CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes)
                 CGEventTapEnable(tap, True)
-                self._mac_tap, self._mac_tap_src = tap, src
+                self._mac_tap = tap
+                # A busy Qt/Chromium main thread can make macOS disable the tap
+                # (timeout); if the disable notification is itself delayed, the
+                # hotkey stays dead until relaunch — which is the intermittency
+                # users hit. This heartbeat re-enables the tap whenever it's
+                # found disabled, so it recovers on its own within a couple of
+                # seconds of the main thread going idle again.
+                self._mac_tap_timer = QTimer(self)
+                self._mac_tap_timer.timeout.connect(self._mac_tap_heartbeat)
+                self._mac_tap_timer.start(2000)
                 _slk_log(f"[tap] installed mods={hex(self._mac_mods)} "
                          f"key={self._mac_key!r} fcode={self._mac_fcode} "
                          f"trusted={mac_accessibility_trusted(prompt=False)}")
@@ -934,14 +950,31 @@ if HAVE_HOTKEY:
                 self._mac_tap = None
                 return False
 
+        def _mac_tap_heartbeat(self):
+            # Runs on the main thread. Re-arm the tap if macOS disabled it.
+            try:
+                if self._mac_tap is not None and not CGEventTapIsEnabled(
+                        self._mac_tap):
+                    _slk_log("[tap] heartbeat: tap was disabled — re-enabling")
+                    CGEventTapEnable(self._mac_tap, True)
+            except Exception:
+                pass
+
         def _tap_callback(self, proxy, etype, event, refcon):
             # Runs on the main run loop. Return None to swallow the event, or the
             # event to let it through. Keep this fast (taps have a timeout).
             try:
                 if etype in (kCGEventTapDisabledByTimeout,
                              kCGEventTapDisabledByUserInput):
+                    _slk_log(f"[tap] disabled (etype={etype}) — re-enabling")
                     if self._mac_tap is not None:
                         CGEventTapEnable(self._mac_tap, True)
+                    return event
+                # Fast reject: CGEvent flags use the same device-independent bits
+                # as NSEvent modifierFlags, so most keystrokes (wrong modifiers)
+                # are dropped here without the cost of building an NSEvent — which
+                # keeps the callback quick and the tap from being timed out.
+                if (int(CGEventGetFlags(event)) & _NS_MOD_MASK) != self._mac_mods:
                     return event
                 ns = NSEvent.eventWithCGEvent_(event)
                 if ns is not None and self._mac_event_matches(ns):

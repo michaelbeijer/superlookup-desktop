@@ -5,6 +5,22 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] — 2026-07-05
+
+### Fixed
+- **macOS: the hotkey no longer silently stops working until you relaunch.** The
+  key-tap runs on the app's main thread; when that thread got busy (loading the
+  embedded web views), macOS could disable the tap on timeout, and because the
+  re-enable was also stuck on the busy thread it never recovered — so the hotkey
+  went dead until you quit and reopened the app. Two changes fix this:
+  a **fast modifier pre-check** so the per-keystroke callback stays quick (it no
+  longer builds an NSEvent for keys that don't carry the hotkey's modifiers),
+  which makes a timeout far less likely; and a **2-second heartbeat that
+  re-enables the tap** whenever macOS is found to have disabled it, so it
+  self-heals within a couple of seconds instead of needing a relaunch.
+
+_macOS-only release; Windows/Linux behaviour is unchanged._
+
 ## [0.1.16] — 2026-07-05
 
 ### Fixed
@@ -199,6 +215,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.17]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.13...v0.1.14
