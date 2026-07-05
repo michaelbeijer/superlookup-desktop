@@ -81,3 +81,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
+          # Auto-populate the release body (commits/PRs since the last tag + a
+          # Full Changelog link) so we never hand-write notes. Falls back to a
+          # compare link when there are no PRs.
+          generate_release_notes: true
