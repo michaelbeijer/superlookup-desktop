@@ -5,6 +5,25 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] — 2026-07-05
+
+### Fixed
+- **macOS: no more spurious "grant Accessibility" prompt after an auto-update.**
+  When the updater swaps in the new bundle and relaunches, macOS can take a few
+  seconds to re-associate an existing Accessibility grant with the new copy —
+  during which the startup check read as untrusted and fired the system prompt
+  even though the grant was fine. The check now retries for ~8 seconds before
+  ever prompting, so a normal update no longer nags you. (If the grant is
+  genuinely missing it still prompts and explains how to fix a stale entry.)
+- **macOS: the window now comes to the front reliably from a cold start.**
+  Previously the search ran but the window stayed behind the active app until
+  you'd opened SuperLookup once — a tray app's first `activateIgnoringOtherApps`
+  is dropped before its window has been realised. Activation is now asserted
+  again on the next event-loop turn (after the window is shown), so it comes
+  forward the first time too.
+
+_macOS-only release; Windows/Linux behaviour is unchanged from 0.1.15._
+
 ## [0.1.15] — 2026-07-05
 
 ### Changed
@@ -180,6 +199,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.16]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.12...v0.1.13

@@ -65,7 +65,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.15"
+VERSION = "0.1.16"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -1804,11 +1804,13 @@ class SuperLookup(QMainWindow):
         # Qt's raise()/activateWindow() alone — the window searches but stays
         # behind (e.g. behind Trados). Force it forward per-OS.
         if IS_MAC and HAVE_MAC_HOTKEY:
-            try:
-                from AppKit import NSApplication
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-            except Exception:
-                pass
+            # From a cold start the very first activateIgnoringOtherApps is
+            # dropped, because the window hasn't been realised yet — which is why
+            # it used to only start working after you'd opened the window once.
+            # Assert it now and again on the next event-loop turn (after show()
+            # has taken effect) so it comes forward reliably from the tray.
+            self._mac_force_front()
+            QTimer.singleShot(0, self._mac_force_front)
         elif sys.platform == "win32":
             if not _win_force_foreground(self):
                 # ctypes path unavailable — fall back to a minimize→restore cycle,
@@ -1820,6 +1822,43 @@ class SuperLookup(QMainWindow):
                     (st & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
                 self.raise_()
                 self.activateWindow()
+
+    def _mac_force_front(self):
+        """Bring the window to the front on macOS, overriding focus-stealing
+        prevention. Called twice from show_window (now + next tick) so it works
+        from a cold start, not just after the window's been shown once."""
+        try:
+            from AppKit import NSApplication
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        except Exception:
+            pass
+        self.raise_()
+        self.activateWindow()
+
+    def _mac_check_accessibility(self, attempt=0):
+        """Warn (and trigger the macOS prompt) only if Accessibility is *still*
+        missing after a few retries. Right after an auto-update the fresh bundle
+        can read as untrusted for a few seconds while TCC re-associates an
+        existing grant — retrying avoids a spurious prompt on every update."""
+        if not HAVE_AX_TRUST:
+            return
+        if mac_accessibility_trusted(prompt=False):
+            return  # trusted — nothing to do
+        if attempt < 4:  # ~8s of grace before bothering the user
+            QTimer.singleShot(
+                2000, lambda: self._mac_check_accessibility(attempt + 1))
+            return
+        mac_accessibility_trusted(prompt=True)  # genuinely missing → system prompt
+        QMessageBox.warning(
+            self, "Enable the global hotkey",
+            "SuperLookup needs Accessibility permission for its global "
+            f"hotkey ({self.hotkey_qt}) to grab your selection from other "
+            "apps.\n\n"
+            "Open System Settings › Privacy & Security › Accessibility and "
+            "switch SuperLookup on.\n\n"
+            "If SuperLookup is already listed (e.g. after an update) but the "
+            "hotkey still does nothing, remove it with the – button and add it "
+            "again — the old entry can go stale.")
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -2067,22 +2106,13 @@ def main():
         app.setQuitOnLastWindowClosed(False)
     if HAVE_HOTKEY:
         win._hotkey = Hotkey(win, qt_to_pynput(win.hotkey_qt) or HOTKEY)  # keep a ref alive
-        # On macOS the global hotkey needs Accessibility permission — both to see
-        # the keystroke and to synthesize the Cmd+C that grabs your selection.
-        # Without it the hotkey silently does nothing, so check on launch, trigger
-        # the system prompt, and explain what to do (and how to fix a stale grant
-        # left behind by an app update).
-        if IS_MAC and HAVE_MAC_HOTKEY and not mac_accessibility_trusted(prompt=True):
-            QTimer.singleShot(400, lambda: QMessageBox.warning(
-                win, "Enable the global hotkey",
-                "SuperLookup needs Accessibility permission for its global "
-                f"hotkey ({win.hotkey_qt}) to grab your selection from other "
-                "apps.\n\n"
-                "Open System Settings › Privacy & Security › "
-                "Accessibility and switch SuperLookup on.\n\n"
-                "If SuperLookup is already listed (e.g. after an update) but the "
-                "hotkey still does nothing, remove it with the – button and "
-                "add it again — the old entry can go stale."))
+        # On macOS the global hotkey needs Accessibility permission (to see the
+        # keystroke and synthesize Cmd+C). Check on launch — but re-check a few
+        # times before nagging: right after an app update, macOS can take a few
+        # seconds to re-associate an existing grant with the new bundle, and we
+        # don't want to fire the system prompt over that transient.
+        if IS_MAC and HAVE_MAC_HOTKEY:
+            win._mac_check_accessibility()
 
     sys.exit(app.exec())
 
