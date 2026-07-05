@@ -17,9 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Windows: the hotkey now brings SuperLookup to the front even when it's
   behind another app.** Windows blocks a background process from stealing focus,
   so `raise()`/`activateWindow()` left the window behind (e.g. behind Trados) —
-  it only worked from the tray or when already visible. It now briefly attaches
-  to the foreground window's input thread so `SetForegroundWindow` is permitted,
-  then detaches (and restores the window if it was minimized).
+  it only worked from the tray or when already visible. It now uses the same
+  proven foreground-grab chain as the Supervertaler Workbench: a synthetic
+  Alt-key press (which satisfies `SetForegroundWindow`'s documented "Alt pressed"
+  exception), the `AttachThreadInput` dance, then `BringWindowToTop` +
+  `SetForegroundWindow` + `SwitchToThisWindow`.
 
 ## [0.1.14] — 2026-07-05
 

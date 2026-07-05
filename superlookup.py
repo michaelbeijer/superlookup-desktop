@@ -660,56 +660,50 @@ IS_MAC = sys.platform == "darwin"
 
 
 def _win_force_foreground(win):
-    """Pull `win` in front of whatever app is currently focused, on Windows.
+    """Pull `win` in front of the currently-focused app on Windows.
 
-    Windows refuses SetForegroundWindow from a process that doesn't own the
-    foreground, so a background/behind window (e.g. behind Trados) can't raise
-    itself with Qt's raise()/activateWindow() alone. We combine the two
-    documented workarounds — temporarily zeroing the foreground-lock timeout and
-    attaching to the foreground thread's input queue — then call
-    SetForegroundWindow. Returns True if it reports success.
+    The bare raise()/activateWindow() trio loses the foreground race against a
+    heavy host like Trados: Windows accepts SetForegroundWindow but quietly
+    refuses to actually raise a background window. This ports the proven
+    escalation chain from the Supervertaler Workbench (hard-won over its v1.10.x
+    series), which is why the Workbench's own SuperLookup comes forward reliably:
 
-    All handles are declared as pointers: HWNDs are 64-bit on Win64 and ctypes'
-    default 32-bit int return/arg types silently truncate them (the bug that made
-    an earlier version of this do nothing)."""
+      1. A synthetic Alt-key press satisfies SetForegroundWindow's documented
+         "Alt key pressed" exception — the OS then grants the call even though we
+         have no other claim to the foreground. We send Alt+F24 (F24 is an inert
+         virtual key nothing binds) rather than a bare Alt tap, so Qt's menu bar
+         doesn't interpret it as "activate the menu".
+      2. The AttachThreadInput dance shares the foreground thread's input queue.
+      3. BringWindowToTop → SetForegroundWindow → SwitchToThisWindow(…, True),
+         the last being a deprecated-but-effective hammer for stubborn hosts.
+
+    Returns True unless the whole ctypes path is unavailable."""
     try:
         import ctypes
-        from ctypes import wintypes
-        u = ctypes.windll.user32
-        k = ctypes.windll.kernel32
-        u.GetForegroundWindow.restype = wintypes.HWND
-        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
-        u.GetWindowThreadProcessId.restype = wintypes.DWORD
-        u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-        u.SetForegroundWindow.argtypes = [wintypes.HWND]
-        u.SetForegroundWindow.restype = wintypes.BOOL
-        u.BringWindowToTop.argtypes = [wintypes.HWND]
-        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-        u.IsIconic.argtypes = [wintypes.HWND]
-        u.SystemParametersInfoW.argtypes = [
-            wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        hwnd = int(win.winId())
 
-        hwnd = wintypes.HWND(int(win.winId()))
-        SW_RESTORE, SPI_GET, SPI_SET = 9, 0x2000, 0x2001
-        if u.IsIconic(hwnd):
-            u.ShowWindow(hwnd, SW_RESTORE)
+        VK_MENU, VK_F24, KEYEVENTF_KEYUP = 0x12, 0x87, 0x0002
+        user32.keybd_event(VK_MENU, 0, 0, 0)                # Alt down
+        user32.keybd_event(VK_F24, 0, 0, 0)                 # F24 down (makes it a chord)
+        user32.keybd_event(VK_F24, 0, KEYEVENTF_KEYUP, 0)   # F24 up
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)  # Alt up
 
-        # Drop the foreground-lock timeout to 0 so the OS honours the call, then
-        # put it back so we don't change the user's setting for good.
-        saved = wintypes.DWORD(0)
-        u.SystemParametersInfoW(SPI_GET, 0, ctypes.byref(saved), 0)
-        u.SystemParametersInfoW(SPI_SET, 0, ctypes.c_void_p(0), 0)
-
-        fg_tid = u.GetWindowThreadProcessId(u.GetForegroundWindow(), None)
-        our_tid = k.GetCurrentThreadId()
-        attached = bool(u.AttachThreadInput(fg_tid, our_tid, True)) if fg_tid else False
-        u.BringWindowToTop(hwnd)
-        ok = bool(u.SetForegroundWindow(hwnd))
-        if attached:
-            u.AttachThreadInput(fg_tid, our_tid, False)
-
-        u.SystemParametersInfoW(SPI_SET, 0, ctypes.c_void_p(saved.value), 0)
-        return ok
+        fg = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg, None)
+        our_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        if fg and fg_thread and fg_thread != our_thread:
+            attached = bool(user32.AttachThreadInput(fg_thread, our_thread, True))
+        try:
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SwitchToThisWindow(hwnd, True)
+        finally:
+            if attached:
+                user32.AttachThreadInput(fg_thread, our_thread, False)
+        return True
     except Exception:
         return False
 
@@ -1817,8 +1811,9 @@ class SuperLookup(QMainWindow):
                 pass
         elif sys.platform == "win32":
             if not _win_force_foreground(self):
-                # Last resort: a minimize→restore cycle always pulls a window to
-                # the front. Restoring to the saved state keeps maximized/normal.
+                # ctypes path unavailable — fall back to a minimize→restore cycle,
+                # which always pulls a window forward; restoring the saved state
+                # keeps maximized/normal.
                 st = self.windowState()
                 self.setWindowState(st | Qt.WindowState.WindowMinimized)
                 self.setWindowState(
