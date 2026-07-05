@@ -5,6 +5,23 @@ All notable changes to SuperLookup are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] — 2026-07-05
+
+### Fixed
+- **macOS: the real fix for the hotkey intermittently going dead.** The key-tap
+  ran on the app's main thread, so when that thread got busy (embedded web
+  views) macOS quietly stopped feeding the tap — a "zombie" tap that still
+  reported enabled, which no re-enable could revive (that's why only a relaunch
+  helped, and why 0.1.17's heartbeat couldn't catch it). The tap now runs on its
+  **own dedicated thread** with its own run loop (the same pattern pynput uses),
+  so a busy main thread can never starve it. To stay off the Carbon
+  Text-Input-Source APIs on that thread (which crash off-main — the original
+  0.1.7 crash), the hotkey is matched by **hardware keycode + modifier flags**
+  instead of `charactersIgnoringModifiers`, and the match is marshalled back to
+  the GUI thread via a queued signal.
+
+_macOS-only release; Windows/Linux behaviour is unchanged._
+
 ## [0.1.17] — 2026-07-05
 
 ### Fixed
@@ -215,6 +232,7 @@ Initial release.
 - Customizable global hotkey; window position restored on hotkey recall.
 - Cross-platform packaging (macOS, Windows, Linux).
 
+[0.1.18]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/michaelbeijer/superlookup-desktop/compare/v0.1.14...v0.1.15

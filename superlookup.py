@@ -65,7 +65,7 @@ except Exception:
     HAVE_HOTKEY = False
 
 
-VERSION = "0.1.17"
+VERSION = "0.1.18"
 WEBSITE = "https://superlookup.io"
 REPO = "https://github.com/michaelbeijer/superlookup-desktop"
 
@@ -728,12 +728,14 @@ HAVE_MAC_TAP = False
 if IS_MAC and HAVE_MAC_HOTKEY:
     try:
         from Quartz import (
-            CGEventTapCreate, CGEventTapEnable, CGEventTapIsEnabled,
-            CGEventGetFlags, CGEventMaskBit, kCGEventKeyDown,
+            CGEventTapCreate, CGEventTapEnable,
+            CGEventGetFlags, CGEventGetIntegerValueField,
+            kCGKeyboardEventKeycode, CGEventMaskBit, kCGEventKeyDown,
             kCGHeadInsertEventTap, kCGEventTapOptionDefault,
             kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput,
             CFMachPortCreateRunLoopSource, CFRunLoopAddSource,
-            CFRunLoopGetMain, kCFRunLoopCommonModes,
+            CFRunLoopGetCurrent, CFRunLoopRun, CFRunLoopStop,
+            kCFRunLoopCommonModes,
         )
         # kCGSessionEventTapLocation isn't exposed by name in this pyobjc build;
         # its enum value is 1 (0=HID, 1=Session, 2=AnnotatedSession).
@@ -817,6 +819,19 @@ _MAC_FKEY_CODES = {"f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96,
                    "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
                    "f11": 103, "f12": 111}
 
+# Hardware keycodes (kVK_ANSI_*) for character keys, keyed by the character the
+# key produces on a US/ANSI layout. Used so the event-tap thread can match the
+# hotkey WITHOUT calling charactersIgnoringModifiers() — that reaches Carbon
+# Text-Input-Source APIs, which hard-crash when called off the main thread.
+_MAC_ANSI_KEYCODES = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
+    "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25,
+    "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33,
+    "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, ";": 41, ",": 43, "/": 44,
+    "n": 45, "m": 46, ".": 47, "`": 50,
+}
+
 
 def _mac_combo_to_mask_key(combo):
     """Parse a pynput-format combo ('<ctrl>+<alt>+l') into (modifier_mask,
@@ -861,6 +876,7 @@ if HAVE_HOTKEY:
             self._mac_tap = None
             self._mac_tap_src = None
             self._mac_mods, self._mac_key, self._mac_fcode = 0, None, None
+            self._mac_keycode = None
             # pynput's Controller is only used off the macOS path.
             self._kbd = None if (IS_MAC and HAVE_MAC_HOTKEY) else _KbController()
             self._fired.connect(self._on_fired)
@@ -891,6 +907,12 @@ if HAVE_HOTKEY:
             if not self._mac_key and self._mac_fcode is None:
                 print(f"[hotkey] unsupported macOS combo: {combo!r}")
                 return
+            # Resolve the hardware keycode now (on the main thread) so the tap
+            # thread can match without any Text-Input-Source lookup.
+            if self._mac_fcode is not None:
+                self._mac_keycode = self._mac_fcode
+            else:
+                self._mac_keycode = _MAC_ANSI_KEYCODES.get(self._mac_key)
             # Prefer a CGEventTap so the hotkey is CONSUMED and never reaches the
             # foreground app; fall back to a watch-only NSEvent monitor.
             if HAVE_MAC_TAP and self._mac_start_tap():
@@ -904,65 +926,73 @@ if HAVE_HOTKEY:
                 except Exception:
                     pass
             self._mac_monitors = []
-            t = getattr(self, "_mac_tap_timer", None)
-            if t is not None:
-                try:
-                    t.stop()
-                except Exception:
-                    pass
-            self._mac_tap_timer = None
             if self._mac_tap is not None:
                 try:
                     CGEventTapEnable(self._mac_tap, False)
                 except Exception:
                     pass
+            loop = getattr(self, "_mac_tap_loop", None)
+            if loop is not None:
+                try:
+                    CFRunLoopStop(loop)   # ends the dedicated tap thread
+                except Exception:
+                    pass
             self._mac_tap = None
+            self._mac_tap_loop = None
+            self._mac_tap_thread = None
 
         def _mac_start_tap(self):
+            # Run the tap on a DEDICATED thread with its own CFRunLoop — the same
+            # pattern pynput uses. On the main run loop, a busy Qt/Chromium main
+            # thread let macOS quietly stop feeding the tap (a "zombie" tap that
+            # still reports enabled), so the hotkey died until relaunch. A tap on
+            # its own thread is never starved and keeps delivering.
+            if not HAVE_MAC_TAP:
+                return False
+            self._mac_tap = None
+            self._mac_tap_loop = None
+            self._mac_tap_ready = threading.Event()
+            self._mac_tap_thread = threading.Thread(
+                target=self._mac_tap_runloop, daemon=True)
+            self._mac_tap_thread.start()
+            self._mac_tap_ready.wait(timeout=2.0)  # let it report create success
+            return self._mac_tap is not None
+
+        def _mac_tap_runloop(self):
+            # Runs on the dedicated tap thread: creates the tap, adds its source
+            # to THIS thread's run loop, and services it forever.
             try:
                 mask = CGEventMaskBit(kCGEventKeyDown)
                 tap = CGEventTapCreate(
                     _KCG_SESSION_TAP, kCGHeadInsertEventTap,
                     kCGEventTapOptionDefault, mask, self._tap_callback, None)
                 if not tap:
-                    _slk_log("[tap] CGEventTapCreate returned NULL "
+                    _slk_log("[tap] CGEventTapCreate NULL on thread "
                              f"(trusted={mac_accessibility_trusted(prompt=False)})")
-                    return False
+                    self._mac_tap_ready.set()
+                    return
                 src = CFMachPortCreateRunLoopSource(None, tap, 0)
-                CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes)
+                self._mac_tap_loop = CFRunLoopGetCurrent()
+                CFRunLoopAddSource(
+                    self._mac_tap_loop, src, kCFRunLoopCommonModes)
                 CGEventTapEnable(tap, True)
                 self._mac_tap = tap
-                # A busy Qt/Chromium main thread can make macOS disable the tap
-                # (timeout); if the disable notification is itself delayed, the
-                # hotkey stays dead until relaunch — which is the intermittency
-                # users hit. This heartbeat re-enables the tap whenever it's
-                # found disabled, so it recovers on its own within a couple of
-                # seconds of the main thread going idle again.
-                self._mac_tap_timer = QTimer(self)
-                self._mac_tap_timer.timeout.connect(self._mac_tap_heartbeat)
-                self._mac_tap_timer.start(2000)
-                _slk_log(f"[tap] installed mods={hex(self._mac_mods)} "
-                         f"key={self._mac_key!r} fcode={self._mac_fcode} "
-                         f"trusted={mac_accessibility_trusted(prompt=False)}")
-                return True
+                _slk_log(f"[tap] running on dedicated thread — "
+                         f"mods={hex(self._mac_mods)} key={self._mac_key!r} "
+                         f"fcode={self._mac_fcode}")
+                self._mac_tap_ready.set()
+                CFRunLoopRun()  # blocks this thread until CFRunLoopStop
+                _slk_log("[tap] run loop ended")
             except Exception as e:
-                _slk_log(f"[tap] EXCEPTION {e}")
-                self._mac_tap = None
-                return False
-
-        def _mac_tap_heartbeat(self):
-            # Runs on the main thread. Re-arm the tap if macOS disabled it.
-            try:
-                if self._mac_tap is not None and not CGEventTapIsEnabled(
-                        self._mac_tap):
-                    _slk_log("[tap] heartbeat: tap was disabled — re-enabling")
-                    CGEventTapEnable(self._mac_tap, True)
-            except Exception:
-                pass
+                _slk_log(f"[tap] runloop error {e}")
+                self._mac_tap_ready.set()
 
         def _tap_callback(self, proxy, etype, event, refcon):
-            # Runs on the main run loop. Return None to swallow the event, or the
-            # event to let it through. Keep this fast (taps have a timeout).
+            # Runs on the DEDICATED tap thread. Match purely on modifier flags +
+            # hardware keycode — NEVER call charactersIgnoringModifiers() or build
+            # an NSEvent here: those reach Carbon Text-Input-Source APIs that
+            # hard-crash (SIGTRAP) when called off the main thread. Return None to
+            # swallow the event, or the event to let it through.
             try:
                 if etype in (kCGEventTapDisabledByTimeout,
                              kCGEventTapDisabledByUserInput):
@@ -970,16 +1000,15 @@ if HAVE_HOTKEY:
                     if self._mac_tap is not None:
                         CGEventTapEnable(self._mac_tap, True)
                     return event
-                # Fast reject: CGEvent flags use the same device-independent bits
-                # as NSEvent modifierFlags, so most keystrokes (wrong modifiers)
-                # are dropped here without the cost of building an NSEvent — which
-                # keeps the callback quick and the tap from being timed out.
                 if (int(CGEventGetFlags(event)) & _NS_MOD_MASK) != self._mac_mods:
                     return event
-                ns = NSEvent.eventWithCGEvent_(event)
-                if ns is not None and self._mac_event_matches(ns):
+                if self._mac_keycode is None:
+                    return event
+                kc = int(CGEventGetIntegerValueField(
+                    event, kCGKeyboardEventKeycode))
+                if kc == self._mac_keycode:
                     _slk_log("[tap] matched — consuming + firing")
-                    self._on_fired()
+                    self._fired.emit()   # marshal to the GUI thread (queued)
                     return None  # consume: the app never sees the hotkey
             except Exception as e:
                 _slk_log(f"[tap] cb error {e}")
