@@ -1680,10 +1680,14 @@ class SuperLookup(QMainWindow):
         QMessageBox.about(
             self, "About SuperLookup",
             f"<h3>SuperLookup {VERSION}</h3>"
-            "<p>One search box for a translator’s reference web — each site opens "
-            "in its own embedded, ad-free tab, summoned by a global hotkey.</p>"
-            f"<p>By <a href='https://beijer.uk'>Michael Beijer</a>. A companion to "
-            "<a href='https://supervertaler.com'>Supervertaler</a>.</p>"
+            "<p>One-keystroke terminology research for translators. Select a word "
+            "in your CAT tool, a PDF or an email, press the global hotkey, and "
+            "SuperLookup opens it across all your terminology sources at once — "
+            "IATE, Linguee, ProZ, Glosbe, Wikipedia and 40+ more — each in its "
+            "own ad-free tab.</p>"
+            f"<p>By <a href='https://beijer.uk'>Michael Beijer</a>. Also built "
+            "into <a href='https://supervertaler.com'>Supervertaler Workbench</a>, "
+            "alongside your own termbases and translation memories.</p>"
             f"<p><a href='{WEBSITE}'>superlookup.io</a> &nbsp;·&nbsp; "
             f"<a href='{REPO}'>GitHub</a></p>")
 
@@ -1692,9 +1696,9 @@ class SuperLookup(QMainWindow):
         extra = (f"  Select text anywhere and press {hk} to search it."
                  if HAVE_HOTKEY else "")
         self._note.setText(
-            "Each resource opens in its own embedded browser tab (loaded when you "
-            "first click it), with ads and trackers blocked. The full Supervertaler "
-            "version also searches your local termbases and translation memories." + extra)
+            "Each terminology source opens in its own ad-free tab (loaded when you "
+            "first click it). Supervertaler Workbench also searches your own "
+            "termbases and translation memories." + extra)
         if getattr(self, "tray", None) is not None:
             self.tray.setToolTip(f"SuperLookup — press {hk}" if HAVE_HOTKEY else "SuperLookup")
 
