@@ -3,7 +3,7 @@
 
 Type a term (or select one anywhere and press the global hotkey), pick a
 language pair, and every reference resource opens in its own *embedded* browser
-tab — Beijerterm, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
+tab — Beijerdictionary, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
 Wiktionary, Google — with ads and trackers blocked. A desktop app can embed a
 real (top-level) browser view, which a website can't: sites block being put in
 an <iframe>.
@@ -310,7 +310,7 @@ BUILTIN_AD_HOSTS = frozenset({
 # search API lives), so an allowlist keeps core functionality working. Ads live
 # on separate domains, so they're still blocked.
 ALLOW_HOSTS = frozenset({
-    "beijerterm.com", "superterm.io", "michaelbeijer-co-uk.workers.dev",
+    "beijerdictionary.com", "beijerterm.com", "superterm.io", "michaelbeijer-co-uk.workers.dev",
     "europa.eu", "linguee.com", "proz.com", "reverso.net",
     "juremy.com", "babelnet.org", "wikipedia.org", "wiktionary.org",
     "google.com", "gstatic.com",
@@ -354,8 +354,8 @@ def lang_code(code, fmt):
 
 
 DEFAULT_RESOURCES = [
-    {"id": "superterm", "icon": "📚", "name": "Beijerterm",
-     "url": "https://beijerterm.com/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
+    {"id": "superterm", "icon": "📚", "name": "Beijerdictionary",
+     "url": "https://beijerdictionary.com/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
     {"id": "iate", "icon": "🇪🇺", "name": "IATE",
      "url": "https://iate.europa.eu/search/byUrl?term={query}&sl={sl}&tl={tl}", "fmt": "iso2"},
     {"id": "linguee", "icon": "📗", "name": "Linguee",
@@ -1265,7 +1265,7 @@ class SettingsDialog(QDialog):
         z_row.addStretch(1)
         v.addLayout(z_row)
         z_hint = QLabel(
-            "Applied to every search tab. Handy for sites like Beijerterm that "
+            "Applied to every search tab. Handy for sites like Beijerdictionary that "
             "show more when zoomed out. (Ctrl +/– still zooms a single tab.)")
         z_hint.setStyleSheet("color:#666; font-size:11px;")
         z_hint.setWordWrap(True)
