@@ -3,7 +3,7 @@
 
 Type a term (or select one anywhere and press the global hotkey), pick a
 language pair, and every reference resource opens in its own *embedded* browser
-tab — Beijerdictionary, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
+tab — Beijer Dictionary, IATE, Linguee, ProZ, Reverso, Juremy, BabelNet, Wikipedia,
 Wiktionary, Google — with ads and trackers blocked. A desktop app can embed a
 real (top-level) browser view, which a website can't: sites block being put in
 an <iframe>.
@@ -354,7 +354,7 @@ def lang_code(code, fmt):
 
 
 DEFAULT_RESOURCES = [
-    {"id": "superterm", "icon": "📚", "name": "Beijerdictionary",
+    {"id": "superterm", "icon": "📚", "name": "Beijer Dictionary",
      "url": "https://beijerdictionary.com/?q={query}&from={sl}&to={tl}", "fmt": "iso2"},
     {"id": "iate", "icon": "🇪🇺", "name": "IATE",
      "url": "https://iate.europa.eu/search/byUrl?term={query}&sl={sl}&tl={tl}", "fmt": "iso2"},
@@ -1265,7 +1265,7 @@ class SettingsDialog(QDialog):
         z_row.addStretch(1)
         v.addLayout(z_row)
         z_hint = QLabel(
-            "Applied to every search tab. Handy for sites like Beijerdictionary that "
+            "Applied to every search tab. Handy for sites like Beijer Dictionary that "
             "show more when zoomed out. (Ctrl +/– still zooms a single tab.)")
         z_hint.setStyleSheet("color:#666; font-size:11px;")
         z_hint.setWordWrap(True)
